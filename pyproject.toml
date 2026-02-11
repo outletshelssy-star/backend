@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.18.1",
     "asyncpg>=0.31.0",
     "fastapi[standard]>=0.128.0",
+    "pydantic-settings>=2.6.0",
     "psycopg2>=2.9.11",
     "python-dotenv>=1.2.1",
     "supabase>=2.4.0",
