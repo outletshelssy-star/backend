@@ -135,7 +135,7 @@ def list_verification_items(
     verification_type_id: int | None = None,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> Any:
     equipment_type = session.get(EquipmentType, equipment_type_id)

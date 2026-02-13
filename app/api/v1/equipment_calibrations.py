@@ -92,6 +92,8 @@ def _infer_measure_from_unit(unit: str | None) -> EquipmentMeasureType | None:
         return EquipmentMeasureType.length
     if unit_key in {"g", "kg", "lb", "lbs", "oz", "gram", "grams", "kilogram", "kilograms", "pound", "pounds", "ounce", "ounces"}:
         return EquipmentMeasureType.weight
+    if unit_key in {"api", "°api"}:
+        return EquipmentMeasureType.api
     return None
 
 
@@ -143,6 +145,14 @@ def _normalize_uncertainty_value(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported weight unit for uncertainty",
+        )
+    if measure == EquipmentMeasureType.api:
+        unit_key = (unit or "api").strip().lower()
+        if unit_key in {"api", "°api"}:
+            return value
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported API unit for uncertainty",
         )
     return value
 
@@ -249,7 +259,7 @@ def create_equipment_calibration(
     payload: EquipmentCalibrationCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentCalibrationRead:
     if current_user.id is None:
@@ -271,6 +281,11 @@ def create_equipment_calibration(
         payload.calibration_company_id,
         payload.calibration_company_name,
     )
+    if not payload.certificate_number or not payload.certificate_number.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="certificate_number is required",
+        )
     _validate_uncertainty_max_error(session, equipment, payload.results)
     calibrated_at = _as_utc(payload.calibrated_at) if payload.calibrated_at else datetime.now(UTC)
 
@@ -280,6 +295,7 @@ def create_equipment_calibration(
         created_by_user_id=current_user.id,
         calibration_company_id=calibration_company_id,
         calibration_company_name=calibration_company_name,
+        certificate_number=payload.certificate_number.strip(),
         notes=payload.notes,
     )
     session.add(calibration)
@@ -301,7 +317,7 @@ def list_equipment_calibrations(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> Any:
     equipment = session.get(Equipment, equipment_id)
@@ -393,10 +409,19 @@ def update_equipment_calibration(
         )
         calibration.calibration_company_id = company_id
         calibration.calibration_company_name = company_name
+    if payload.certificate_number is not None:
+        calibration.certificate_number = payload.certificate_number
     if payload.notes is not None:
         calibration.notes = payload.notes
     if payload.certificate_pdf_url is not None:
         calibration.certificate_pdf_url = payload.certificate_pdf_url
+    if payload.certificate_number is not None:
+        if not payload.certificate_number.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="certificate_number is required",
+            )
+        calibration.certificate_number = payload.certificate_number.strip()
 
     session.add(calibration)
     if payload.results is not None:

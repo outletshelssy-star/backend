@@ -192,6 +192,14 @@ def create_equipment_type(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=str(exc),
                 ) from exc
+        elif max_error.measure == EquipmentMeasureType.api:
+            unit_key = max_error.unit.strip().lower()
+            if unit_key not in {"api", "°api"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Unsupported API unit",
+                )
+            normalized_value = max_error.max_error_value
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -241,7 +249,7 @@ def create_equipment_type(
 def list_equipment_types(
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
     include: str | None = Query(default=None),
 ) -> Any:
@@ -314,7 +322,7 @@ def get_equipment_type(
     equipment_type_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
     include: str | None = Query(default=None),
 ) -> EquipmentTypeReadWithIncludes:
@@ -550,6 +558,14 @@ def update_equipment_type(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=str(exc),
                     ) from exc
+            elif max_error.measure == EquipmentMeasureType.api:
+                unit_key = max_error.unit.strip().lower()
+                if unit_key not in {"api", "°api"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Unsupported API unit",
+                    )
+                normalized_value = max_error.max_error_value
             else:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

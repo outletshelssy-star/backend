@@ -40,6 +40,7 @@ from app.models.user import User
 from app.models.user_terminal import UserTerminal
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
+from app.utils.hydrometer import api_60f_crude
 
 router = APIRouter(
     prefix="/equipment-verifications",
@@ -161,6 +162,12 @@ def _is_tape_type_name(equipment_type: EquipmentType | None) -> bool:
         "cinta metrica plomada fondo",
         "cinta metrica plomada vacio",
     }
+
+
+def _is_hydrometer_type_name(equipment_type: EquipmentType | None) -> bool:
+    if equipment_type is None:
+        return False
+    return equipment_type.name.strip().lower() == "hidrometro"
 
 
 def _requires_tape_comparison(equipment_type: EquipmentType | None) -> bool:
@@ -436,7 +443,7 @@ def create_equipment_verification(
     replace_existing: bool = Query(False, alias="replace_existing"),
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentVerificationRead:
     if current_user.id is None:
@@ -562,8 +569,16 @@ def create_equipment_verification(
         and _requires_tape_comparison(equipment_type)
         and _has_length_measure(session, equipment_type.id)
     )
+    applies_hydrometer_comparison_rule = (
+        equipment_type is not None
+        and _is_hydrometer_type_name(equipment_type)
+        and equipment_type.role == EquipmentRole.working
+        and bool(verification_type and int(verification_type.frequency_days) == 30)
+    )
     applies_comparison_rule = (
-        applies_temperature_comparison_rule or applies_tape_comparison_rule
+        applies_temperature_comparison_rule
+        or applies_tape_comparison_rule
+        or applies_hydrometer_comparison_rule
     )
     is_monthly = bool(
         verification_type and int(verification_type.frequency_days) == 30
@@ -620,6 +635,11 @@ def create_equipment_verification(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Reference equipment must be different from equipment under test",
             )
+        if reference_equipment.status != EquipmentStatus.in_use:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference equipment must be in use",
+            )
         if reference_equipment.terminal_id != equipment.terminal_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -641,6 +661,12 @@ def create_equipment_verification(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Reference equipment must be a temperature reference equipment",
             )
+        if applies_hydrometer_comparison_rule:
+            if not _is_hydrometer_type_name(reference_type):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference equipment must be a hydrometer reference equipment",
+                )
         if applies_tape_comparison_rule:
             if not _is_tape_type_name(reference_type):
                 raise HTTPException(
@@ -675,7 +701,41 @@ def create_equipment_verification(
         is_monthly = bool(
             verification_type and int(verification_type.frequency_days) == 30
         )
-        if applies_temperature_comparison_rule:
+        if applies_hydrometer_comparison_rule:
+            if (
+                payload.reading_under_test_value is None
+                or payload.reference_reading_value is None
+                or payload.reading_under_test_f is None
+                or payload.reference_reading_f is None
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Hydrometer working/reference readings and thermometer "
+                        "readings (in F) are required for this verification"
+                    ),
+                )
+            try:
+                work_api60 = api_60f_crude(
+                    float(payload.reading_under_test_f),
+                    float(payload.reading_under_test_value),
+                )
+                ref_api60 = api_60f_crude(
+                    float(payload.reference_reading_f),
+                    float(payload.reference_reading_value),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            diff_api = work_api60 - ref_api60
+            comparison_ok = -0.5 <= diff_api <= 0.5
+            if not comparison_ok:
+                comparison_message = (
+                    "Diferencia API a 60F fuera del rango permitido (-0.5 a 0.5)."
+                )
+        elif applies_temperature_comparison_rule:
             temperature_spec = _get_temperature_measure_spec(session, equipment.id)
             if is_monthly:
                 if not (
@@ -1118,8 +1178,16 @@ def update_equipment_verification(
         and _requires_tape_comparison(equipment_type)
         and _has_length_measure(session, equipment_type.id)
     )
+    applies_hydrometer_comparison_rule = (
+        equipment_type is not None
+        and _is_hydrometer_type_name(equipment_type)
+        and equipment_type.role == EquipmentRole.working
+        and bool(int(verification_type.frequency_days) == 30)
+    )
     applies_comparison_rule = (
-        applies_temperature_comparison_rule or applies_tape_comparison_rule
+        applies_temperature_comparison_rule
+        or applies_tape_comparison_rule
+        or applies_hydrometer_comparison_rule
     )
     is_monthly = bool(int(verification_type.frequency_days) == 30)
     comparison_ok = True
@@ -1174,6 +1242,11 @@ def update_equipment_verification(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Reference equipment must be different from equipment under test",
             )
+        if reference_equipment.status != EquipmentStatus.in_use:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference equipment must be in use",
+            )
         if reference_equipment.terminal_id != equipment.terminal_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1195,6 +1268,12 @@ def update_equipment_verification(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Reference equipment must be a temperature reference equipment",
             )
+        if applies_hydrometer_comparison_rule:
+            if not _is_hydrometer_type_name(reference_type):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference equipment must be a hydrometer reference equipment",
+                )
         if applies_tape_comparison_rule:
             if not _is_tape_type_name(reference_type):
                 raise HTTPException(
@@ -1226,7 +1305,41 @@ def update_equipment_verification(
                     "inspection for the verification date"
                 ),
             )
-        if applies_temperature_comparison_rule:
+        if applies_hydrometer_comparison_rule:
+            if (
+                payload.reading_under_test_value is None
+                or payload.reference_reading_value is None
+                or payload.reading_under_test_f is None
+                or payload.reference_reading_f is None
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Hydrometer working/reference readings and thermometer "
+                        "readings (in F) are required for this verification"
+                    ),
+                )
+            try:
+                work_api60 = api_60f_crude(
+                    float(payload.reading_under_test_f),
+                    float(payload.reading_under_test_value),
+                )
+                ref_api60 = api_60f_crude(
+                    float(payload.reference_reading_f),
+                    float(payload.reference_reading_value),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            diff_api = work_api60 - ref_api60
+            comparison_ok = -0.5 <= diff_api <= 0.5
+            if not comparison_ok:
+                comparison_message = (
+                    "Diferencia API a 60F fuera del rango permitido (-0.5 a 0.5)."
+                )
+        elif applies_temperature_comparison_rule:
             temperature_spec = _get_temperature_measure_spec(session, equipment.id)
             if not temperature_spec:
                 raise HTTPException(

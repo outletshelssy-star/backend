@@ -1,4 +1,4 @@
-from typing import Any
+﻿from typing import Any
 
 from datetime import UTC, datetime
 
@@ -141,8 +141,14 @@ def _normalize_length(value: float, unit: str) -> float:
     )
 
 
-
-
+def _normalize_api(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower()
+    if unit_key in {"api", "°api"}:
+        return value
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported API unit",
+    )
 
 def _replace_component_serials(
     session: Session,
@@ -249,6 +255,7 @@ def create_equipment(
             EquipmentMeasureType.temperature,
             EquipmentMeasureType.weight,
             EquipmentMeasureType.length,
+            EquipmentMeasureType.api,
         }:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -277,6 +284,14 @@ def create_equipment(
             max_value = _normalize_weight(spec.max_value, spec.max_unit)
             resolution = (
                 _normalize_weight(spec.resolution, spec.resolution_unit)
+                if spec.resolution is not None
+                else None
+            )
+        elif spec.measure == EquipmentMeasureType.api:
+            min_value = _normalize_api(spec.min_value, spec.min_unit)
+            max_value = _normalize_api(spec.max_value, spec.max_unit)
+            resolution = (
+                _normalize_api(spec.resolution, spec.resolution_unit)
                 if spec.resolution is not None
                 else None
             )
@@ -334,7 +349,7 @@ def create_equipment(
 def list_equipment(
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
     include: str | None = Query(default=None),
 ) -> Any:
@@ -472,7 +487,7 @@ def get_equipment(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
     include: str | None = Query(default=None),
 ) -> EquipmentReadWithIncludes:
@@ -729,6 +744,7 @@ def update_equipment(
                 EquipmentMeasureType.temperature,
                 EquipmentMeasureType.weight,
                 EquipmentMeasureType.length,
+                EquipmentMeasureType.api,
             }:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -757,6 +773,14 @@ def update_equipment(
                 max_value = _normalize_weight(spec.max_value, spec.max_unit)
                 resolution = (
                     _normalize_weight(spec.resolution, spec.resolution_unit)
+                    if spec.resolution is not None
+                    else None
+                )
+            elif spec.measure == EquipmentMeasureType.api:
+                min_value = _normalize_api(spec.min_value, spec.min_unit)
+                max_value = _normalize_api(spec.max_value, spec.max_unit)
+                resolution = (
+                    _normalize_api(spec.resolution, spec.resolution_unit)
                     if spec.resolution is not None
                     else None
                 )
@@ -940,6 +964,8 @@ def list_equipment_type_history(
         for h in history
     ]
     return EquipmentTypeHistoryListResponse(items=items)
+
+
 
 
 

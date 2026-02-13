@@ -314,7 +314,9 @@ def create_equipment_inspection(
 def list_equipment_inspections(
     equipment_id: int,
     session: Session = Depends(get_session),
-    _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
+    _: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
 ) -> Any:
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
@@ -360,7 +362,9 @@ def list_equipment_inspections(
 def get_equipment_inspection(
     inspection_id: int,
     session: Session = Depends(get_session),
-    _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
+    _: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
 ) -> EquipmentInspectionRead:
     inspection = session.get(EquipmentInspection, inspection_id)
     if not inspection:

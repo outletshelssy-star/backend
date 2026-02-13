@@ -60,7 +60,7 @@ def create_company(
 def list_companies(
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
     include: str | None = Query(default=None),
 ) -> Any:
@@ -117,7 +117,7 @@ def get_company(
     company_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.user, UserType.admin, UserType.superadmin)
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
     ),
     include: str | None = Query(default=None),
 ):

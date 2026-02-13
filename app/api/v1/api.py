@@ -10,6 +10,8 @@ from app.api.v1 import (
     equipment_calibrations,
     equipment_inspections,
     equipment_verifications,
+    hydrometer,
+    samples,
     equipment_type,
     equipment_type_inspection_items,
     equipment_type_verifications,
@@ -32,3 +34,5 @@ api_router.include_router(equipment_inspections.router)
 api_router.include_router(equipment_verifications.router)
 api_router.include_router(equipment_calibrations.router)
 api_router.include_router(equipment_readings.router)
+api_router.include_router(hydrometer.router)
+api_router.include_router(samples.router)

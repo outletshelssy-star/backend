@@ -16,6 +16,7 @@ from app.models.company_terminal import (
 )
 from app.models.enums import UserType
 from app.models.user import User
+from app.models.user_terminal import UserTerminal
 
 router = APIRouter(
     prefix="/company-terminals",
@@ -67,6 +68,7 @@ def create_company_terminal(
         owner_company_id=owner_company.id,
         admin_company_id=terminal_in.admin_company_id,
         created_by_user_id=current_user.id,
+        terminal_code=terminal_in.terminal_code,
     )
 
     session.add(terminal)
@@ -82,7 +84,9 @@ def create_company_terminal(
 )
 def list_company_terminals(
     session: Session = Depends(get_session),
-    _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
     include: str | None = Query(default=None),
     owner_company_id: int | None = Query(default=None),
 ) -> Any:
@@ -91,6 +95,16 @@ def list_company_terminals(
         statement = statement.where(
             CompanyTerminal.owner_company_id == owner_company_id
         )
+    if current_user.user_type != UserType.superadmin:
+        allowed_terminal_ids = session.exec(
+            select(UserTerminal.terminal_id).where(
+                UserTerminal.user_id == current_user.id
+            )
+        ).all()
+        if allowed_terminal_ids:
+            statement = statement.where(
+                CompanyTerminal.id.in_(allowed_terminal_ids)
+            )
     terminals = session.exec(statement).all()
     if not terminals:
         return CompanyTerminalListResponse(message="No records found")
@@ -139,10 +153,23 @@ def list_company_terminals(
 def get_company_terminal(
     terminal_id: int,
     session: Session = Depends(get_session),
-    _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
     include: str | None = Query(default=None),
     owner_company_id: int = Query(...),
 ):
+    if current_user.user_type != UserType.superadmin:
+        allowed_terminal_ids = session.exec(
+            select(UserTerminal.terminal_id).where(
+                UserTerminal.user_id == current_user.id
+            )
+        ).all()
+        if allowed_terminal_ids and terminal_id not in allowed_terminal_ids:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Company terminal not found",
+            )
     terminal = session.get(CompanyTerminal, terminal_id)
     if not terminal or terminal.owner_company_id != owner_company_id:
         raise HTTPException(
