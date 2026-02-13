@@ -9,18 +9,22 @@ DEFAULT_TERMINALS = [
     {
         "name": "Sabanero",
         "block": "Sabanero",
+        "code": "SAB",
     },
     {
         "name": "El Dificil",
         "block": "El Dificil",
+        "code": "EDI",
     },
     {
         "name": "CPE-6",
         "block": "Hamaca",
+        "code": "CPE",
     },
     {
         "name": "Quifa",
         "block": "Quifa",
+        "code": "QUI",
     },
 ]
 
@@ -30,6 +34,10 @@ DEFAULT_COMPANIES = [
     {
         "name": "Frontera Energy",
         "company_type": "master",
+    },
+    {
+        "name": "ANH",
+        "company_type": "client",
     },
     {
         "name": "Intertek Colombia",
@@ -56,6 +64,15 @@ DEFAULT_USERS = [
         "email": "user@local.dev",
         "password": "user12345",
         "user_type": "user",
+        "terminals": ["Sabanero"],
+    },
+    {
+        "name": "Visitante",
+        "last_name": "ANH",
+        "email": "visitante@anh.com",
+        "password": "visitante12345",
+        "user_type": "visitor",
+        "company": "ANH",
         "terminals": ["Sabanero"],
     },
 ]

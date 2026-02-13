@@ -90,6 +90,47 @@ DEFAULT_EQUIPMENT_TYPES = [
         ],
     },
     {
+        "name": "Hidrometro",
+        "role": "working",
+        "calibration_days": 365,
+        "verification_types": [
+            {
+                "name": "Mensual",
+                "frequency_days": 30,
+                "is_active": True,
+                "order": 0,
+            },
+        ],
+        "maintenance_days": 0,
+        "inspection_days": 1,
+        "observations": "Norma API.",
+        "measures": ["api"],
+        "max_errors": [
+            {
+                "measure": "api",
+                "max_error_value": 0.2,
+                "unit": "api",
+            }
+        ],
+    },
+    {
+        "name": "Hidrometro",
+        "role": "reference",
+        "calibration_days": 365,
+        "verification_types": [],
+        "maintenance_days": 0,
+        "inspection_days": 1,
+        "observations": "Norma API.",
+        "measures": ["api"],
+        "max_errors": [
+            {
+                "measure": "api",
+                "max_error_value": 0.2,
+                "unit": "api",
+            }
+        ],
+    },
+    {
         "name": "Termometro de Vidrio",
         "role": "reference",
         "calibration_days": 365,
@@ -687,6 +728,64 @@ DEFAULT_EQUIPMENT_TYPE_INSPECTION_ITEMS = [
                 "is_required": True,
                 "order": 2,
                 "expected_bool": True,
+            },
+        ],
+    },
+    {
+        "equipment_type": {
+            "name": "Hidrometro",
+            "role": "working",
+        },
+        "items": [
+            {
+                "item": "Presenta Rotura?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 1,
+                "expected_bool": False,
+            },
+            {
+                "item": "Escala Visible?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 2,
+                "expected_bool": True,
+            },
+            {
+                "item": "Lastre Suelto?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 3,
+                "expected_bool": False,
+            },
+        ],
+    },
+    {
+        "equipment_type": {
+            "name": "Hidrometro",
+            "role": "reference",
+        },
+        "items": [
+            {
+                "item": "Presenta Rotura?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 1,
+                "expected_bool": False,
+            },
+            {
+                "item": "Escala Visible?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 2,
+                "expected_bool": True,
+            },
+            {
+                "item": "Lastre Suelto?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 3,
+                "expected_bool": False,
             },
         ],
     },

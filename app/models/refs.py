@@ -35,3 +35,4 @@ class EquipmentTypeRef(SQLModel):
     name: str
     role: EquipmentRole
     inspection_days: int | None = None
+    calibration_days: int | None = None

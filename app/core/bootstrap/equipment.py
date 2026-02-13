@@ -61,6 +61,13 @@ def _normalize_length(value: float, unit: str) -> float:
     raise ValueError(f"Unsupported length unit: {unit}")
 
 
+def _normalize_api(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower()
+    if unit_key in {"api", "°api"}:
+        return float(value)
+    raise ValueError(f"Unsupported API unit: {unit}")
+
+
 def ensure_default_equipment(session: Session) -> None:
     company = session.exec(
         select(Company).where(Company.name == DEFAULT_PRIMARY_COMPANY_NAME)
@@ -167,6 +174,14 @@ def ensure_default_equipment(session: Session) -> None:
                 max_norm = _normalize_length(max_value, max_unit)
                 res_norm = (
                     _normalize_length(resolution, resolution_unit)
+                    if resolution is not None
+                    else None
+                )
+            elif measure == EquipmentMeasureType.api:
+                min_norm = _normalize_api(min_value, min_unit)
+                max_norm = _normalize_api(max_value, max_unit)
+                res_norm = (
+                    _normalize_api(resolution, resolution_unit)
                     if resolution is not None
                     else None
                 )

@@ -116,6 +116,11 @@ def ensure_default_equipment_types(session: Session) -> None:
                 normalized = _normalize_weight(value, unit)
             elif measure == EquipmentMeasureType.length:
                 normalized = _normalize_length(value, unit)
+            elif measure == EquipmentMeasureType.api:
+                unit_key = str(unit).strip().lower()
+                if unit_key not in {"api", "°api"}:
+                    raise ValueError("Unsupported API unit")
+                normalized = value
             else:
                 raise ValueError(f"Unit conversion not implemented for {measure}")
             session.add(

@@ -31,6 +31,19 @@ class UserBase(SQLModel):
     photo_url: str | None = None
     is_active: bool = Field(default=True)
 
+    @field_validator("name", "last_name")
+    @classmethod
+    def normalize_names(cls, v: str) -> str:
+        normalized = " ".join(str(v).strip().lower().split())
+        if not normalized:
+            return normalized
+        return " ".join(word[:1].upper() + word[1:] for word in normalized.split(" "))
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr) -> str:
+        return str(v).strip().lower()
+
     @field_validator("photo_url")
     @classmethod
     def photo_url_must_be_valid(cls, v: str | None) -> str | None:
@@ -71,6 +84,16 @@ class UserUpdateMe(SQLModel):
             return v
         return validate_url(v)
 
+    @field_validator("name", "last_name")
+    @classmethod
+    def normalize_names(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        normalized = " ".join(str(v).strip().lower().split())
+        if not normalized:
+            return normalized
+        return " ".join(word[:1].upper() + word[1:] for word in normalized.split(" "))
+
 
 class UserUpdateAdmin(SQLModel):
     name: str | None = Field(
@@ -94,6 +117,23 @@ class UserUpdateAdmin(SQLModel):
         if v is None:
             return v
         return validate_url(v)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: EmailStr | None) -> str | None:
+        if v is None:
+            return v
+        return str(v).strip().lower()
+
+    @field_validator("name", "last_name")
+    @classmethod
+    def normalize_names(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        normalized = " ".join(str(v).strip().lower().split())
+        if not normalized:
+            return normalized
+        return " ".join(word[:1].upper() + word[1:] for word in normalized.split(" "))
 
 
 class UserRead(SQLModel):

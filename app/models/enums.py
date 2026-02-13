@@ -5,6 +5,7 @@ class UserType(str, Enum):
     superadmin = "superadmin"
     admin = "admin"
     user = "user"
+    visitor = "visitor"
 
 
 class CompanyType(str, Enum):
@@ -23,6 +24,7 @@ class EquipmentMeasureType(str, Enum):
     pressure = "pressure"
     length = "length"
     weight = "weight"
+    api = "api"
 
 
 class EquipmentStatus(str, Enum):
@@ -39,3 +41,8 @@ class InspectionResponseType(str, Enum):
     boolean = "boolean"
     text = "text"
     number = "number"
+
+
+class SampleAnalysisType(str, Enum):
+    api_astm_1298 = "api_astm_1298"
+    water_astm_4377 = "water_astm_4377"

@@ -220,4 +220,50 @@ DEFAULT_EQUIPMENT = [
             }
         ],
     },
+    {
+        "equipment_type": {
+            "name": "Hidrometro",
+            "role": "reference",
+        },
+        "serial": "HID-PAT-001",
+        "model": "HID-100-P",
+        "brand": "Acme",
+        "status": "in_use",
+        "inspection_days_override": None,
+        "terminal": "Sabanero",
+        "measure_specs": [
+            {
+                "measure": "api",
+                "min_unit": "api",
+                "max_unit": "api",
+                "resolution_unit": "api",
+                "min_value": 0.0,
+                "max_value": 100.0,
+                "resolution": 0.1,
+            }
+        ],
+    },
+    {
+        "equipment_type": {
+            "name": "Hidrometro",
+            "role": "working",
+        },
+        "serial": "HID-W-001",
+        "model": "HID-200-W",
+        "brand": "Omega",
+        "status": "in_use",
+        "inspection_days_override": None,
+        "terminal": "Sabanero",
+        "measure_specs": [
+            {
+                "measure": "api",
+                "min_unit": "api",
+                "max_unit": "api",
+                "resolution_unit": "api",
+                "min_value": 0.0,
+                "max_value": 100.0,
+                "resolution": 0.1,
+            }
+        ],
+    },
 ]

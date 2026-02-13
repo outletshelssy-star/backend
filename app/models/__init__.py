@@ -14,3 +14,4 @@ from .equipment_type_max_error import EquipmentTypeMaxError
 from .equipment_type_measure import EquipmentTypeMeasure
 from .equipment_type_role_history import EquipmentTypeRoleHistory
 from .user_terminal import UserTerminal
+from .sample import Sample, SampleAnalysis, SampleAnalysisHistory

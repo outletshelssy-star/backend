@@ -48,6 +48,11 @@ def ensure_default_company(session: Session) -> None:
     secondary_company = session.exec(
         select(Company).where(Company.name != DEFAULT_PRIMARY_COMPANY_NAME)
     ).first()
+    companies_by_name = {
+        c.name: c
+        for c in session.exec(select(Company)).all()
+        if c.id is not None
+    }
 
     if superadmin.company_id != primary_company.id:
         superadmin.company_id = primary_company.id
@@ -57,7 +62,16 @@ def ensure_default_company(session: Session) -> None:
         statement = select(User).where(User.email == user_data["email"])
         existing_user = session.exec(statement).first()
         if existing_user:
-            if existing_user.user_type in {
+            target_company_name = user_data.get("company")
+            target_company = (
+                companies_by_name.get(target_company_name)
+                if target_company_name
+                else None
+            )
+            if target_company and existing_user.company_id != target_company.id:
+                existing_user.company_id = target_company.id
+                session.add(existing_user)
+            elif existing_user.user_type in {
                 UserType.superadmin,
                 UserType.admin,
             }:
@@ -69,6 +83,12 @@ def ensure_default_company(session: Session) -> None:
                 session.add(existing_user)
             continue
 
+        target_company_name = user_data.get("company")
+        target_company = (
+            companies_by_name.get(target_company_name)
+            if target_company_name
+            else None
+        )
         new_user = User(
             name=user_data["name"],
             last_name=user_data["last_name"],
@@ -77,9 +97,13 @@ def ensure_default_company(session: Session) -> None:
             is_active=True,
             password_hash=hash_password(user_data["password"]),
             company_id=(
-                primary_company.id
-                if user_data["user_type"] in {"superadmin", "admin"}
-                else (secondary_company.id if secondary_company else primary_company.id)
+                target_company.id
+                if target_company
+                else (
+                    primary_company.id
+                    if user_data["user_type"] in {"superadmin", "admin"}
+                    else (secondary_company.id if secondary_company else primary_company.id)
+                )
             ),
         )
         session.add(new_user)
@@ -125,11 +149,17 @@ def ensure_default_company(session: Session) -> None:
         )
     ).all()
     existing_terminals = {t.name for t in terminals}
+    terminal_codes_by_name = {t.name: t for t in terminals}
 
     for terminal_data in DEFAULT_TERMINALS:
         name = terminal_data["name"]
         block_name = terminal_data["block"]
+        code = terminal_data.get("code")
         if name in existing_terminals:
+            existing_terminal = terminal_codes_by_name.get(name)
+            if existing_terminal and not existing_terminal.terminal_code and code:
+                existing_terminal.terminal_code = code
+                session.add(existing_terminal)
             continue
         block_for_terminal = blocks_by_name.get(block_name)
         if not block_for_terminal or block_for_terminal.id is None:
@@ -141,6 +171,7 @@ def ensure_default_company(session: Session) -> None:
             owner_company_id=primary_company.id,
             admin_company_id=primary_company.id,
             created_by_user_id=superadmin.id,
+            terminal_code=code,
         )
         session.add(new_terminal)
 
