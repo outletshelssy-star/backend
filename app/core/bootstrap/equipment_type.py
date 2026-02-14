@@ -62,6 +62,13 @@ def _normalize_length(value: float, unit: str) -> float:
     raise ValueError(f"Unsupported length unit: {unit}")
 
 
+def _normalize_percent_pv(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower().replace(" ", "")
+    if unit_key in {"%p/v", "%pv", "p/v", "%w/v"}:
+        return value
+    raise ValueError(f"Unsupported percent p/v unit: {unit}")
+
+
 def ensure_default_equipment_types(session: Session) -> None:
     superadmin = session.exec(
         select(User).where(User.user_type == UserType.superadmin)
@@ -118,9 +125,11 @@ def ensure_default_equipment_types(session: Session) -> None:
                 normalized = _normalize_length(value, unit)
             elif measure == EquipmentMeasureType.api:
                 unit_key = str(unit).strip().lower()
-                if unit_key not in {"api", "°api"}:
+                if unit_key not in {"api"}:
                     raise ValueError("Unsupported API unit")
                 normalized = value
+            elif measure == EquipmentMeasureType.percent_pv:
+                normalized = _normalize_percent_pv(value, unit)
             else:
                 raise ValueError(f"Unit conversion not implemented for {measure}")
             session.add(

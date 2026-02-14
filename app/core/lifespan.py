@@ -11,6 +11,7 @@ from app.core.bootstrap.equipment_type import (
     ensure_default_equipment_type_inspection_items,
     ensure_default_equipment_type_verifications,
 )
+from app.core.bootstrap.external_analysis import ensure_default_external_analysis_types
 from app.core.bootstrap.superadmin import ensure_superadmin
 from app.core.config import get_settings
 from app.core.logging import setup_logging
@@ -38,6 +39,7 @@ async def lifespan(app: FastAPI):
                     ensure_default_equipment_type_verifications(session)
                     ensure_default_equipment_type_inspection_items(session)
                     ensure_default_equipment(session)
+                    ensure_default_external_analysis_types(session)
             logger.info("✅ Superadmin check completed")
         except Exception as err:
             logger.exception("❌ Failed to ensure superadmin")

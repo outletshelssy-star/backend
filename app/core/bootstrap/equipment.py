@@ -63,9 +63,16 @@ def _normalize_length(value: float, unit: str) -> float:
 
 def _normalize_api(value: float, unit: str) -> float:
     unit_key = unit.strip().lower()
-    if unit_key in {"api", "°api"}:
+    if unit_key in {"api"}:
         return float(value)
     raise ValueError(f"Unsupported API unit: {unit}")
+
+def _normalize_percent_pv(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower().replace(" ", "")
+    if unit_key in {"%p/v", "%pv", "p/v", "%w/v"}:
+        return float(value)
+    raise ValueError(f"Unsupported percent p/v unit: {unit}")
+
 
 
 def ensure_default_equipment(session: Session) -> None:
@@ -182,6 +189,14 @@ def ensure_default_equipment(session: Session) -> None:
                 max_norm = _normalize_api(max_value, max_unit)
                 res_norm = (
                     _normalize_api(resolution, resolution_unit)
+                    if resolution is not None
+                    else None
+                )
+            elif measure == EquipmentMeasureType.percent_pv:
+                min_norm = _normalize_percent_pv(min_value, min_unit)
+                max_norm = _normalize_percent_pv(max_value, max_unit)
+                res_norm = (
+                    _normalize_percent_pv(resolution, resolution_unit)
                     if resolution is not None
                     else None
                 )

@@ -175,12 +175,6 @@ DEFAULT_EQUIPMENT_TYPES = [
                 "is_active": True,
                 "order": 0,
             },
-            {
-                "name": "Verificacion mensual",
-                "frequency_days": 30,
-                "is_active": True,
-                "order": 1,
-            },
         ],
         "maintenance_days": 365,
         "inspection_days": 1,
@@ -785,6 +779,28 @@ DEFAULT_EQUIPMENT_TYPE_INSPECTION_ITEMS = [
                 "response_type": "boolean",
                 "is_required": True,
                 "order": 3,
+                "expected_bool": False,
+            },
+        ],
+    },
+    {
+        "equipment_type": {
+            "name": "Balanza Analitica",
+            "role": "working",
+        },
+        "items": [
+            {
+                "item": "Enciende correctamente y sin errores?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 1,
+                "expected_bool": True,
+            },
+            {
+                "item": "Presenta Corrosion o partes sueltas?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 2,
                 "expected_bool": False,
             },
         ],
