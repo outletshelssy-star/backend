@@ -9,9 +9,14 @@ from .equipment_inspection import EquipmentInspection, EquipmentInspectionRespon
 from .equipment_calibration import EquipmentCalibration, EquipmentCalibrationResult
 from .equipment_type import EquipmentType
 from .equipment_type_history import EquipmentTypeHistory
+from .equipment_terminal_history import EquipmentTerminalHistory
+from .equipment_history import EquipmentHistoryEntry
 from .equipment_type_inspection_item import EquipmentTypeInspectionItem
 from .equipment_type_max_error import EquipmentTypeMaxError
 from .equipment_type_measure import EquipmentTypeMeasure
 from .equipment_type_role_history import EquipmentTypeRoleHistory
 from .user_terminal import UserTerminal
 from .sample import Sample, SampleAnalysis, SampleAnalysisHistory
+from .external_analysis_type import ExternalAnalysisType
+from .external_analysis_terminal import ExternalAnalysisTerminal
+from .external_analysis_record import ExternalAnalysisRecord

@@ -25,6 +25,7 @@ class EquipmentMeasureType(str, Enum):
     length = "length"
     weight = "weight"
     api = "api"
+    percent_pv = "percent_pv"
 
 
 class EquipmentStatus(str, Enum):

@@ -47,6 +47,10 @@ class EquipmentVerificationCreate(SQLModel):
     verified_at: datetime | None = None
     notes: str | None = None
     reference_equipment_id: int | None = None
+    kf_weight_1: float | None = None
+    kf_volume_1: float | None = None
+    kf_weight_2: float | None = None
+    kf_volume_2: float | None = None
     reading_under_test_f: float | None = None
     reference_reading_f: float | None = None
     reading_under_test_value: float | None = None
@@ -69,6 +73,10 @@ class EquipmentVerificationUpdate(SQLModel):
     verified_at: datetime | None = None
     notes: str | None = None
     reference_equipment_id: int | None = None
+    kf_weight_1: float | None = None
+    kf_volume_1: float | None = None
+    kf_weight_2: float | None = None
+    kf_volume_2: float | None = None
     reading_under_test_f: float | None = None
     reference_reading_f: float | None = None
     reading_under_test_value: float | None = None

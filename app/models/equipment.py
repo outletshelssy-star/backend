@@ -47,6 +47,24 @@ class EquipmentBase(SQLModel):
     owner_company_id: int = Field(foreign_key="company.id")
     terminal_id: int = Field(foreign_key="company_terminal.id")
     created_by_user_id: int = Field(foreign_key="user.id")
+    weight_class: str | None = Field(
+        default=None,
+        description="Weight class (E1, E2, F1, F2, M1, M2, M3).",
+        max_length=5,
+    )
+    nominal_mass_value: float | None = Field(
+        default=None,
+        description="Nominal mass value.",
+    )
+    nominal_mass_unit: str | None = Field(
+        default=None,
+        description="Nominal mass unit (g, mg).",
+        max_length=2,
+    )
+    emp_value: float | None = Field(
+        default=None,
+        description="Maximum permissible error for the weight.",
+    )
 
 
 class Equipment(AuditMixin, EquipmentBase, table=True):
@@ -67,6 +85,10 @@ class EquipmentCreate(SQLModel):
     terminal_id: int
     component_serials: list[EquipmentComponentSerialCreate] = Field(default_factory=list)
     measure_specs: list[EquipmentMeasureSpecCreate] = Field(default_factory=list)
+    weight_class: str | None = None
+    nominal_mass_value: float | None = None
+    nominal_mass_unit: str | None = None
+    emp_value: float | None = None
 
 
 class EquipmentUpdate(SQLModel):
@@ -82,6 +104,10 @@ class EquipmentUpdate(SQLModel):
     terminal_id: int | None = None
     component_serials: list[EquipmentComponentSerialCreate] | None = None
     measure_specs: list[EquipmentMeasureSpecCreate] | None = None
+    weight_class: str | None = None
+    nominal_mass_value: float | None = None
+    nominal_mass_unit: str | None = None
+    emp_value: float | None = None
 
 
 class EquipmentRead(SQLModel):
@@ -97,6 +123,10 @@ class EquipmentRead(SQLModel):
     owner_company_id: int
     terminal_id: int
     created_by_user_id: int
+    weight_class: str | None
+    nominal_mass_value: float | None
+    nominal_mass_unit: str | None
+    emp_value: float | None
     component_serials: list[EquipmentComponentSerialRead] = Field(default_factory=list)
     measure_specs: list[EquipmentMeasureSpecRead] = Field(default_factory=list)
 

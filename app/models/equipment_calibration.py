@@ -28,6 +28,13 @@ class EquipmentCalibrationResult(SQLModel, table=True):
     unit: str | None = None
     error_value: float | None = None
     tolerance_value: float | None = None
+    volume_value: float | None = None
+    systematic_error: float | None = None
+    systematic_emp: float | None = None
+    random_error: float | None = None
+    random_emp: float | None = None
+    uncertainty_value: float | None = None
+    k_value: float | None = None
     is_ok: bool | None = None
     notes: str | None = None
 
@@ -39,6 +46,13 @@ class EquipmentCalibrationResultCreate(SQLModel):
     unit: str | None = None
     error_value: float | None = None
     tolerance_value: float | None = None
+    volume_value: float | None = None
+    systematic_error: float | None = None
+    systematic_emp: float | None = None
+    random_error: float | None = None
+    random_emp: float | None = None
+    uncertainty_value: float | None = None
+    k_value: float | None = None
     is_ok: bool | None = None
     notes: str | None = None
 
@@ -71,6 +85,13 @@ class EquipmentCalibrationResultRead(SQLModel):
     unit: str | None
     error_value: float | None
     tolerance_value: float | None
+    volume_value: float | None
+    systematic_error: float | None
+    systematic_emp: float | None
+    random_error: float | None
+    random_emp: float | None
+    uncertainty_value: float | None
+    k_value: float | None
     is_ok: bool | None
     notes: str | None
 

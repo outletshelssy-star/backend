@@ -97,6 +97,44 @@ def upload_calibration_certificate(file: UploadFile, calibration_id: int) -> str
     return public_url
 
 
+def upload_external_analysis_report(file: UploadFile, record_id: int) -> str:
+    content_type = (file.content_type or "").lower()
+    filename = (file.filename or "").lower()
+    if content_type != "application/pdf" and not filename.endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid PDF file",
+        )
+
+    settings = get_settings()
+    if not settings.supabase_storage_bucket:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Supabase storage bucket is not configured",
+        )
+
+    file_bytes = file.file.read()
+    path = f"external_analysis_reports/{record_id}/report.pdf"
+
+    client = _get_client()
+    storage = client.storage.from_(settings.supabase_storage_bucket)
+    storage.upload(
+        path,
+        file_bytes,
+        {
+            "content-type": "application/pdf",
+            "x-upsert": "true",
+        },
+    )
+    public_url = storage.get_public_url(path)
+    if not public_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate public URL",
+        )
+    return public_url
+
+
 def delete_user_photo(photo_url: str) -> None:
     if not photo_url:
         return
