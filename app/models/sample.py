@@ -32,7 +32,14 @@ class SampleAnalysisBase(SQLModel):
     api_60f: float | None = None
     hydrometer_id: int | None = Field(default=None, foreign_key="equipment.id")
     thermometer_id: int | None = Field(default=None, foreign_key="equipment.id")
+    kf_equipment_id: int | None = Field(default=None, foreign_key="equipment.id")
+    water_balance_id: int | None = Field(default=None, foreign_key="equipment.id")
     water_value: float | None = None
+    water_sample_weight: float | None = None
+    water_sample_weight_unit: str | None = Field(default=None, max_length=2)
+    water_volume_consumed: float | None = None
+    water_volume_unit: str | None = Field(default=None, max_length=2)
+    kf_factor_avg: float | None = None
 
 
 class SampleAnalysis(AuditMixin, SampleAnalysisBase, table=True):
@@ -73,12 +80,19 @@ class SampleAnalysisCreate(SQLModel):
     lectura_api: float | None = None
     hydrometer_id: int | None = None
     thermometer_id: int | None = None
+    kf_equipment_id: int | None = None
+    water_balance_id: int | None = None
     water_value: float | None = None
+    water_sample_weight: float | None = None
+    water_sample_weight_unit: str | None = None
+    water_volume_consumed: float | None = None
+    water_volume_unit: str | None = None
+    kf_factor_avg: float | None = None
 
 
 class SampleCreate(SQLModel):
     terminal_id: int
-    identifier: str | None = None
+    identifier: str
     analyses: list[SampleAnalysisCreate] = Field(default_factory=list)
 
 
@@ -90,7 +104,14 @@ class SampleAnalysisUpdate(SQLModel):
     lectura_api: float | None = None
     hydrometer_id: int | None = None
     thermometer_id: int | None = None
+    kf_equipment_id: int | None = None
+    water_balance_id: int | None = None
     water_value: float | None = None
+    water_sample_weight: float | None = None
+    water_sample_weight_unit: str | None = None
+    water_volume_consumed: float | None = None
+    water_volume_unit: str | None = None
+    kf_factor_avg: float | None = None
 
 
 class SampleUpdate(SQLModel):
@@ -112,7 +133,14 @@ class SampleAnalysisRead(SQLModel):
     api_60f: float | None
     hydrometer_id: int | None
     thermometer_id: int | None
+    kf_equipment_id: int | None
     water_value: float | None
+    water_sample_weight: float | None
+    water_balance_id: int | None
+    water_sample_weight_unit: str | None
+    water_volume_consumed: float | None
+    water_volume_unit: str | None
+    kf_factor_avg: float | None
 
 
 class SampleRead(SQLModel):

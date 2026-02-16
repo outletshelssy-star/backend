@@ -15,6 +15,8 @@ def _normalize_title(value: str) -> str:
 class CompanyTerminalBase(SQLModel):
     name: str = Field(min_length=2, description="Nombre del terminal")
     is_active: bool = Field(default=True)
+    has_lab: bool = Field(default=True)
+    lab_terminal_id: int | None = Field(default=None, foreign_key="company_terminal.id")
     block_id: int = Field(foreign_key="company_block.id")
     owner_company_id: int = Field(foreign_key="company.id")
     admin_company_id: int = Field(foreign_key="company.id")
@@ -31,6 +33,8 @@ class CompanyTerminal(AuditMixin, CompanyTerminalBase, table=True):
 class CompanyTerminalCreate(SQLModel):
     name: str = Field(min_length=2)
     is_active: bool = True
+    has_lab: bool = True
+    lab_terminal_id: int | None = None
     block_id: int
     owner_company_id: int
     admin_company_id: int
@@ -49,14 +53,16 @@ class CompanyTerminalCreate(SQLModel):
         normalized = str(v).strip().upper()
         if not normalized:
             return None
-        if not normalized.isalpha() or not (3 <= len(normalized) <= 4):
-            raise ValueError("Terminal code must be 3 to 4 letters (A-Z).")
+        if not normalized.isalnum() or not (3 <= len(normalized) <= 4):
+            raise ValueError("Terminal code must be 3 to 4 alphanumeric characters (A-Z, 0-9).")
         return normalized
 
 
 class CompanyTerminalUpdate(SQLModel):
     name: str | None = Field(default=None, min_length=2)
     is_active: bool | None = None
+    has_lab: bool | None = None
+    lab_terminal_id: int | None = None
     block_id: int | None = None
     owner_company_id: int | None = None
     admin_company_id: int | None = None
@@ -77,8 +83,8 @@ class CompanyTerminalUpdate(SQLModel):
         normalized = str(v).strip().upper()
         if not normalized:
             return None
-        if not normalized.isalpha() or not (3 <= len(normalized) <= 4):
-            raise ValueError("Terminal code must be 3 to 4 letters (A-Z).")
+        if not normalized.isalnum() or not (3 <= len(normalized) <= 4):
+            raise ValueError("Terminal code must be 3 to 4 alphanumeric characters (A-Z, 0-9).")
         return normalized
 
 
@@ -86,6 +92,8 @@ class CompanyTerminalRead(SQLModel):
     id: int
     name: str
     is_active: bool
+    has_lab: bool
+    lab_terminal_id: int | None
     block_id: int
     owner_company_id: int
     admin_company_id: int

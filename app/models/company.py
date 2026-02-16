@@ -16,6 +16,7 @@ def _normalize_title(value: str) -> str:
 class CompanyBase(SQLModel):
     name: str = Field(min_length=2, description="Nombre de la empresa")
     company_type: CompanyType = Field(description="Tipo de empresa")
+    is_active: bool = Field(default=True)
     created_by_user_id: int = Field(foreign_key="user.id")
 
 
@@ -26,6 +27,7 @@ class Company(AuditMixin, CompanyBase, table=True):
 class CompanyCreate(SQLModel):
     name: str = Field(min_length=2)
     company_type: CompanyType
+    is_active: bool = True
 
     @field_validator("name")
     @classmethod
@@ -36,6 +38,7 @@ class CompanyCreate(SQLModel):
 class CompanyUpdate(SQLModel):
     name: str | None = Field(default=None, min_length=2)
     company_type: CompanyType | None = None
+    is_active: bool | None = None
 
     @field_validator("name")
     @classmethod
@@ -49,6 +52,7 @@ class CompanyRead(SQLModel):
     id: int
     name: str
     company_type: CompanyType
+    is_active: bool
     created_by_user_id: int
 
 

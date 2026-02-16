@@ -23,6 +23,7 @@ class EquipmentTypeBase(SQLModel):
     inspection_days: int = Field(ge=0)
     observations: str | None = Field(default=None)
     is_active: bool = Field(default=True)
+    is_lab: bool = Field(default=False)
     created_by_user_id: int = Field(foreign_key="user.id")
 
 
@@ -42,6 +43,7 @@ class EquipmentTypeCreate(SQLModel):
     inspection_days: int = Field(ge=0)
     observations: str | None = None
     is_active: bool = True
+    is_lab: bool = False
     measures: list[EquipmentMeasureType] = Field(default_factory=list)
     max_errors: list[EquipmentTypeMaxErrorCreate] = Field(default_factory=list)
 
@@ -54,6 +56,7 @@ class EquipmentTypeUpdate(SQLModel):
     inspection_days: int | None = Field(default=None, ge=0)
     observations: str | None = None
     is_active: bool | None = None
+    is_lab: bool | None = None
     measures: list[EquipmentMeasureType] | None = None
     max_errors: list[EquipmentTypeMaxErrorCreate] | None = None
 
@@ -67,6 +70,7 @@ class EquipmentTypeRead(SQLModel):
     inspection_days: int
     observations: str | None
     is_active: bool
+    is_lab: bool
     created_by_user_id: int
     measures: list[EquipmentMeasureType] = Field(default_factory=list)
     max_errors: list[EquipmentTypeMaxErrorRead] = Field(default_factory=list)

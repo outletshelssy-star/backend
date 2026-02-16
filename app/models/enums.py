@@ -21,6 +21,7 @@ class EquipmentRole(str, Enum):
 
 class EquipmentMeasureType(str, Enum):
     temperature = "temperature"
+    relative_humidity = "relative_humidity"
     pressure = "pressure"
     length = "length"
     weight = "weight"

@@ -11,6 +11,7 @@ class EquipmentHistoryEntry(SQLModel):
     started_at: datetime
     ended_at: datetime | None
     changed_by_user_id: int
+    changed_by_user_name: str | None = None
 
 
 class EquipmentHistoryListResponse(SQLModel):

@@ -16,6 +16,7 @@ class CompanyRef(SQLModel):
     id: int
     name: str
     company_type: CompanyType
+    is_active: bool
 
 
 class CompanyBlockRef(SQLModel):
@@ -36,3 +37,4 @@ class EquipmentTypeRef(SQLModel):
     role: EquipmentRole
     inspection_days: int | None = None
     calibration_days: int | None = None
+    is_lab: bool | None = None
