@@ -53,7 +53,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "measure_specs": [
             {
                 "measure": "temperature",
@@ -76,7 +76,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "measure_specs": [
             {
                 "measure": "temperature",
@@ -99,7 +99,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Omega",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "measure_specs": [
             {
                 "measure": "temperature",
@@ -122,7 +122,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "component_serials": [
             {"component_name": "Cinta", "serial": "CINTA-CMPF-W-001"},
             {"component_name": "Plomada", "serial": "PLOM-CMPF-W-001"},
@@ -149,7 +149,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "component_serials": [
             {"component_name": "Cinta", "serial": "CINTA-CMPF-P-001"},
             {"component_name": "Plomada", "serial": "PLOM-CMPF-P-001"},
@@ -176,7 +176,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "component_serials": [
             {"component_name": "Cinta", "serial": "CINTA-CMPV-W-001"},
             {"component_name": "Plomada", "serial": "PLOM-CMPV-W-001"},
@@ -203,7 +203,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "component_serials": [
             {"component_name": "Cinta", "serial": "CINTA-CMPV-P-001"},
             {"component_name": "Plomada", "serial": "PLOM-CMPV-P-001"},
@@ -230,7 +230,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Acme",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "measure_specs": [
             {
                 "measure": "api",
@@ -253,7 +253,7 @@ DEFAULT_EQUIPMENT = [
         "brand": "Omega",
         "status": "in_use",
         "inspection_days_override": None,
-        "terminal": "Sabanero",
+        "terminal": "Hoatzin",
         "measure_specs": [
             {
                 "measure": "api",
@@ -264,6 +264,38 @@ DEFAULT_EQUIPMENT = [
                 "max_value": 100.0,
                 "resolution": 0.1,
             }
+        ],
+    },
+    {
+        "equipment_type": {
+            "name": "TermoHigrometro",
+            "role": "working",
+        },
+        "serial": "TH-HTZ-001",
+        "model": "TH-200",
+        "brand": "Acme",
+        "status": "in_use",
+        "inspection_days_override": None,
+        "terminal": "Hoatzin",
+        "measure_specs": [
+            {
+                "measure": "relative_humidity",
+                "min_unit": "%",
+                "max_unit": "%",
+                "resolution_unit": "%",
+                "min_value": 0.0,
+                "max_value": 100.0,
+                "resolution": 0.1,
+            },
+            {
+                "measure": "temperature",
+                "min_unit": "c",
+                "max_unit": "c",
+                "resolution_unit": "c",
+                "min_value": -10.0,
+                "max_value": 60.0,
+                "resolution": 0.1,
+            },
         ],
     },
 ]

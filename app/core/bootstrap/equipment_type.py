@@ -69,6 +69,13 @@ def _normalize_percent_pv(value: float, unit: str) -> float:
     raise ValueError(f"Unsupported percent p/v unit: {unit}")
 
 
+def _normalize_relative_humidity(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower().replace(" ", "")
+    if unit_key in {"%", "%rh", "rh", "percent", "relativehumidity"}:
+        return value
+    raise ValueError(f"Unsupported relative humidity unit: {unit}")
+
+
 def ensure_default_equipment_types(session: Session) -> None:
     superadmin = session.exec(
         select(User).where(User.user_type == UserType.superadmin)
@@ -94,6 +101,7 @@ def ensure_default_equipment_types(session: Session) -> None:
             inspection_days=data["inspection_days"],
             observations=data.get("observations"),
             is_active=True,
+            is_lab=bool(data.get("is_lab", False)),
             created_by_user_id=superadmin.id,
         )
         session.add(equipment_type)
@@ -130,6 +138,8 @@ def ensure_default_equipment_types(session: Session) -> None:
                 normalized = value
             elif measure == EquipmentMeasureType.percent_pv:
                 normalized = _normalize_percent_pv(value, unit)
+            elif measure == EquipmentMeasureType.relative_humidity:
+                normalized = _normalize_relative_humidity(value, unit)
             else:
                 raise ValueError(f"Unit conversion not implemented for {measure}")
             session.add(
@@ -207,7 +217,7 @@ def ensure_default_equipment_type_verifications(session: Session) -> None:
             continue
 
         defaults = seed.get("verification_types")
-        if not defaults:
+        if defaults is None:
             defaults = [
                 {
                     "name": "Verificacion",

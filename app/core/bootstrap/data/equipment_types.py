@@ -33,6 +33,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Termometro Electronico TL1",
         "role": "working",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [
             {
                 "name": "Diaria",
@@ -63,6 +64,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Termometro de Vidrio",
         "role": "working",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [
             {
                 "name": "Diaria",
@@ -93,6 +95,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Hidrometro",
         "role": "working",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [
             {
                 "name": "Mensual",
@@ -117,6 +120,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Hidrometro",
         "role": "reference",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [],
         "maintenance_days": 0,
         "inspection_days": 1,
@@ -134,6 +138,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Termometro de Vidrio",
         "role": "reference",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [],
         "maintenance_days": 0,
         "inspection_days": 1,
@@ -151,6 +156,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Termometro Electronico TL1",
         "role": "reference",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [],
         "maintenance_days": 0,
         "inspection_days": 1,
@@ -168,6 +174,7 @@ DEFAULT_EQUIPMENT_TYPES = [
         "name": "Balanza Analitica",
         "role": "working",
         "calibration_days": 365,
+        "is_lab": True,
         "verification_types": [
             {
                 "name": "Verificacion diaria",
@@ -284,6 +291,29 @@ DEFAULT_EQUIPMENT_TYPES = [
                 "max_error_value": 1,
                 "unit": "mm",
             }
+        ],
+    },
+    {
+        "name": "TermoHigrometro",
+        "role": "working",
+        "calibration_days": 365,
+        "is_lab": True,
+        "verification_types": [],
+        "maintenance_days": 0,
+        "inspection_days": 1,
+        "observations": None,
+        "measures": ["relative_humidity", "temperature"],
+        "max_errors": [
+            {
+                "measure": "relative_humidity",
+                "max_error_value": 2,
+                "unit": "%",
+            },
+            {
+                "measure": "temperature",
+                "max_error_value": 0.2,
+                "unit": "c",
+            },
         ],
     },
 ]
@@ -820,6 +850,28 @@ DEFAULT_EQUIPMENT_TYPE_INSPECTION_ITEMS = [
             },
             {
                 "item": "El Sensor esta en Buen Estado?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 2,
+                "expected_bool": True,
+            },
+        ],
+    },
+    {
+        "equipment_type": {
+            "name": "TermoHigrometro",
+            "role": "working",
+        },
+        "items": [
+            {
+                "item": "Baterias Descargadas?",
+                "response_type": "boolean",
+                "is_required": True,
+                "order": 1,
+                "expected_bool": False,
+            },
+            {
+                "item": "Pantalla Funcionando?",
                 "response_type": "boolean",
                 "is_required": True,
                 "order": 2,

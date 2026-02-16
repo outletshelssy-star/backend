@@ -151,14 +151,26 @@ def ensure_default_company(session: Session) -> None:
     existing_terminals = {t.name for t in terminals}
     terminal_codes_by_name = {t.name: t for t in terminals}
 
+    pending_lab_links: dict[str, str] = {}
     for terminal_data in DEFAULT_TERMINALS:
         name = terminal_data["name"]
         block_name = terminal_data["block"]
         code = terminal_data.get("code")
+        is_active = terminal_data.get("is_active", True)
+        has_lab = terminal_data.get("has_lab", True)
+        lab_terminal_name = terminal_data.get("lab_terminal")
+        if lab_terminal_name:
+            pending_lab_links[name] = lab_terminal_name
         if name in existing_terminals:
             existing_terminal = terminal_codes_by_name.get(name)
             if existing_terminal and not existing_terminal.terminal_code and code:
                 existing_terminal.terminal_code = code
+                session.add(existing_terminal)
+            if existing_terminal and existing_terminal.is_active != is_active:
+                existing_terminal.is_active = is_active
+                session.add(existing_terminal)
+            if existing_terminal and existing_terminal.has_lab != has_lab:
+                existing_terminal.has_lab = has_lab
                 session.add(existing_terminal)
             continue
         block_for_terminal = blocks_by_name.get(block_name)
@@ -166,7 +178,8 @@ def ensure_default_company(session: Session) -> None:
             raise RuntimeError(f"Block '{block_name}' not found for terminal '{name}'")
         new_terminal = CompanyTerminal(
             name=name,
-            is_active=True,
+            is_active=is_active,
+            has_lab=has_lab,
             block_id=block_for_terminal.id,
             owner_company_id=primary_company.id,
             admin_company_id=primary_company.id,
@@ -183,6 +196,20 @@ def ensure_default_company(session: Session) -> None:
         )
     ).all()
     terminals_by_name = {t.name: t for t in terminals if t.id is not None}
+    if pending_lab_links:
+        for terminal_name, lab_terminal_name in pending_lab_links.items():
+            terminal = terminals_by_name.get(terminal_name)
+            lab_terminal = terminals_by_name.get(lab_terminal_name)
+            if not terminal or terminal.id is None:
+                continue
+            if not lab_terminal or lab_terminal.id is None:
+                raise RuntimeError(
+                    f"Lab terminal '{lab_terminal_name}' not found for '{terminal_name}'"
+                )
+            terminal.has_lab = False
+            terminal.lab_terminal_id = lab_terminal.id
+            session.add(terminal)
+        session.commit()
     if terminals_by_name:
         users_by_email = {
             u.email: u
