@@ -47,16 +47,27 @@ from app.models.equipment_calibration import (
 from app.api.v1.equipment_verifications import _parse_monthly_readings_from_notes
 from app.models.equipment_reading import EquipmentReading
 from app.models.equipment_type import EquipmentType
+from app.models.user import User
 from app.models.equipment_type_history import (
     EquipmentTypeHistory,
     EquipmentTypeHistoryListResponse,
     EquipmentTypeHistoryRead,
+)
+from app.models.equipment_terminal_history import (
+    EquipmentTerminalHistory,
+    EquipmentTerminalHistoryListResponse,
+    EquipmentTerminalHistoryRead,
+)
+from app.models.equipment_history import (
+    EquipmentHistoryEntry,
+    EquipmentHistoryListResponse,
 )
 from app.models.user_terminal import UserTerminal
 from app.models.user import User
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
 from app.utils.measurements.weight import Weight
+from app.utils.emp_weights import get_emp
 
 router = APIRouter(
     prefix="/equipment",
@@ -143,12 +154,60 @@ def _normalize_length(value: float, unit: str) -> float:
 
 def _normalize_api(value: float, unit: str) -> float:
     unit_key = unit.strip().lower()
-    if unit_key in {"api", "°api"}:
+    if unit_key in {"api"}:
         return value
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Unsupported API unit",
     )
+
+
+def _normalize_percent_pv(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower().replace(" ", "")
+    if unit_key in {"%p/v", "%pv", "p/v", "%w/v"}:
+        return value
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported percent p/v unit",
+    )
+
+
+def _normalize_relative_humidity(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower().replace(" ", "")
+    if unit_key in {"%", "%rh", "rh", "percent", "relativehumidity"}:
+        return value
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported relative humidity unit",
+    )
+
+
+def _format_nominal_mass(value: float) -> str:
+    numeric = float(value)
+    if numeric.is_integer():
+        return str(int(numeric))
+    return str(numeric).rstrip("0").rstrip(".")
+
+
+def _validate_weight_serial(serial: str, nominal_mass_value: float, unit: str) -> None:
+    if not serial:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Serial is required",
+        )
+    unit_key = str(unit or "").strip().lower()
+    if unit_key != "g":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Serial validation only supports unit g",
+        )
+    expected = f"{_format_nominal_mass(nominal_mass_value)}G"
+    serial_norm = serial.strip().upper().replace(" ", "")
+    if not serial_norm.endswith(expected):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Serial must end with {expected}",
+        )
 
 def _replace_component_serials(
     session: Session,
@@ -218,6 +277,31 @@ def create_equipment(
             detail="Terminal not found",
         )
 
+    emp_value = None
+    weight_class = equipment_in.weight_class
+    nominal_mass_value = equipment_in.nominal_mass_value
+    nominal_mass_unit = equipment_in.nominal_mass_unit
+    if (
+        weight_class is not None
+        or nominal_mass_value is not None
+        or nominal_mass_unit is not None
+    ):
+        if not weight_class or nominal_mass_value is None or not nominal_mass_unit:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="weight_class, nominal_mass_value and nominal_mass_unit are required together",
+            )
+        try:
+            emp_value = get_emp(weight_class, nominal_mass_value, nominal_mass_unit)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        _validate_weight_serial(
+            equipment_in.serial, nominal_mass_value, nominal_mass_unit
+        )
+
     equipment = Equipment(
         serial=equipment_in.serial,
         model=equipment_in.model,
@@ -229,6 +313,10 @@ def create_equipment(
         owner_company_id=equipment_in.owner_company_id,
         terminal_id=equipment_in.terminal_id,
         created_by_user_id=current_user.id,
+        weight_class=weight_class,
+        nominal_mass_value=nominal_mass_value,
+        nominal_mass_unit=nominal_mass_unit,
+        emp_value=emp_value,
     )
 
     session.add(equipment)
@@ -239,6 +327,13 @@ def create_equipment(
         EquipmentTypeHistory(
             equipment_id=equipment.id,
             equipment_type_id=equipment.equipment_type_id,
+            changed_by_user_id=current_user.id,
+        )
+    )
+    session.add(
+        EquipmentTerminalHistory(
+            equipment_id=equipment.id,
+            terminal_id=equipment.terminal_id,
             changed_by_user_id=current_user.id,
         )
     )
@@ -256,6 +351,8 @@ def create_equipment(
             EquipmentMeasureType.weight,
             EquipmentMeasureType.length,
             EquipmentMeasureType.api,
+            EquipmentMeasureType.percent_pv,
+            EquipmentMeasureType.relative_humidity,
         }:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -292,6 +389,22 @@ def create_equipment(
             max_value = _normalize_api(spec.max_value, spec.max_unit)
             resolution = (
                 _normalize_api(spec.resolution, spec.resolution_unit)
+                if spec.resolution is not None
+                else None
+            )
+        elif spec.measure == EquipmentMeasureType.percent_pv:
+            min_value = _normalize_percent_pv(spec.min_value, spec.min_unit)
+            max_value = _normalize_percent_pv(spec.max_value, spec.max_unit)
+            resolution = (
+                _normalize_percent_pv(spec.resolution, spec.resolution_unit)
+                if spec.resolution is not None
+                else None
+            )
+        elif spec.measure == EquipmentMeasureType.relative_humidity:
+            min_value = _normalize_relative_humidity(spec.min_value, spec.min_unit)
+            max_value = _normalize_relative_humidity(spec.max_value, spec.max_unit)
+            resolution = (
+                _normalize_relative_humidity(spec.resolution, spec.resolution_unit)
                 if spec.resolution is not None
                 else None
             )
@@ -654,6 +767,39 @@ def update_equipment(
     specs = update_data.pop("measure_specs", None)
     component_serials = update_data.pop("component_serials", None)
 
+    if {
+        "weight_class",
+        "nominal_mass_value",
+        "nominal_mass_unit",
+    } & set(update_data.keys()):
+        weight_class = update_data.get("weight_class")
+        nominal_mass_value = update_data.get("nominal_mass_value")
+        nominal_mass_unit = update_data.get("nominal_mass_unit")
+        if not weight_class and nominal_mass_value is None and not nominal_mass_unit:
+            update_data["weight_class"] = None
+            update_data["nominal_mass_value"] = None
+            update_data["nominal_mass_unit"] = None
+            update_data["emp_value"] = None
+        else:
+            if not weight_class or nominal_mass_value is None or not nominal_mass_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="weight_class, nominal_mass_value and nominal_mass_unit are required together",
+                )
+            try:
+                update_data["emp_value"] = get_emp(
+                    weight_class, nominal_mass_value, nominal_mass_unit
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            serial_to_check = update_data.get("serial", equipment.serial)
+            _validate_weight_serial(
+                serial_to_check, nominal_mass_value, nominal_mass_unit
+            )
+
     if "equipment_type_id" in update_data:
         equipment_type_id = update_data["equipment_type_id"]
         if equipment_type_id is not None:
@@ -663,24 +809,24 @@ def update_equipment(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Equipment type not found",
                 )
+            if equipment_type_id != equipment.equipment_type_id:
+                current_history = session.exec(
+                    select(EquipmentTypeHistory).where(
+                        EquipmentTypeHistory.equipment_id == equipment.id,
+                        EquipmentTypeHistory.ended_at.is_(None),
+                    )
+                ).first()
+                if current_history:
+                    current_history.ended_at = datetime.now(UTC)
+                    session.add(current_history)
 
-            current_history = session.exec(
-                select(EquipmentTypeHistory).where(
-                    EquipmentTypeHistory.equipment_id == equipment.id,
-                    EquipmentTypeHistory.ended_at.is_(None),
+                session.add(
+                    EquipmentTypeHistory(
+                        equipment_id=equipment.id,
+                        equipment_type_id=equipment_type_id,
+                        changed_by_user_id=current_user.id,
+                    )
                 )
-            ).first()
-            if current_history:
-                current_history.ended_at = datetime.now(UTC)
-                session.add(current_history)
-
-            session.add(
-                EquipmentTypeHistory(
-                    equipment_id=equipment.id,
-                    equipment_type_id=equipment_type_id,
-                    changed_by_user_id=current_user.id,
-                )
-            )
 
     if "owner_company_id" in update_data:
         owner_company_id = update_data["owner_company_id"]
@@ -705,6 +851,23 @@ def update_equipment(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this terminal",
+            )
+        if terminal_id is not None and terminal_id != equipment.terminal_id:
+            current_history = session.exec(
+                select(EquipmentTerminalHistory).where(
+                    EquipmentTerminalHistory.equipment_id == equipment.id,
+                    EquipmentTerminalHistory.ended_at.is_(None),
+                )
+            ).first()
+            if current_history:
+                current_history.ended_at = datetime.now(UTC)
+                session.add(current_history)
+            session.add(
+                EquipmentTerminalHistory(
+                    equipment_id=equipment.id,
+                    terminal_id=terminal_id,
+                    changed_by_user_id=current_user.id,
+                )
             )
 
     for field, value in update_data.items():
@@ -745,6 +908,8 @@ def update_equipment(
                 EquipmentMeasureType.weight,
                 EquipmentMeasureType.length,
                 EquipmentMeasureType.api,
+                EquipmentMeasureType.percent_pv,
+                EquipmentMeasureType.relative_humidity,
             }:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -781,6 +946,22 @@ def update_equipment(
                 max_value = _normalize_api(spec.max_value, spec.max_unit)
                 resolution = (
                     _normalize_api(spec.resolution, spec.resolution_unit)
+                    if spec.resolution is not None
+                    else None
+                )
+            elif spec.measure == EquipmentMeasureType.percent_pv:
+                min_value = _normalize_percent_pv(spec.min_value, spec.min_unit)
+                max_value = _normalize_percent_pv(spec.max_value, spec.max_unit)
+                resolution = (
+                    _normalize_percent_pv(spec.resolution, spec.resolution_unit)
+                    if spec.resolution is not None
+                    else None
+                )
+            elif spec.measure == EquipmentMeasureType.relative_humidity:
+                min_value = _normalize_relative_humidity(spec.min_value, spec.min_unit)
+                max_value = _normalize_relative_humidity(spec.max_value, spec.max_unit)
+                resolution = (
+                    _normalize_relative_humidity(spec.resolution, spec.resolution_unit)
                     if spec.resolution is not None
                     else None
                 )
@@ -925,6 +1106,11 @@ def delete_equipment(
             EquipmentTypeHistory.equipment_id == equipment.id
         )
     )
+    session.exec(
+        delete(EquipmentTerminalHistory).where(
+            EquipmentTerminalHistory.equipment_id == equipment.id
+        )
+    )
     session.delete(equipment)
     session.commit()
     return EquipmentDeleteResponse(
@@ -942,10 +1128,18 @@ def delete_equipment(
 def list_equipment_type_history(
     equipment_id: int,
     session: Session = Depends(get_session),
-    _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
 ) -> Any:
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Equipment not found",
+        )
+    allowed_terminal_ids = _get_allowed_terminal_ids(session, current_user)
+    if allowed_terminal_ids and equipment.terminal_id not in allowed_terminal_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Equipment not found",
@@ -964,6 +1158,134 @@ def list_equipment_type_history(
         for h in history
     ]
     return EquipmentTypeHistoryListResponse(items=items)
+
+
+@router.get(
+    "/{equipment_id}/terminal-history",
+    response_model=EquipmentTerminalHistoryListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_equipment_terminal_history(
+    equipment_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
+) -> Any:
+    equipment = session.get(Equipment, equipment_id)
+    if not equipment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Equipment not found",
+        )
+    allowed_terminal_ids = _get_allowed_terminal_ids(session, current_user)
+    if allowed_terminal_ids and equipment.terminal_id not in allowed_terminal_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Equipment not found",
+        )
+
+    history = session.exec(
+        select(EquipmentTerminalHistory).where(
+            EquipmentTerminalHistory.equipment_id == equipment_id
+        )
+    ).all()
+    if not history:
+        return EquipmentTerminalHistoryListResponse(message="No records found")
+
+    items = [
+        EquipmentTerminalHistoryRead(**h.model_dump())
+        for h in history
+    ]
+    return EquipmentTerminalHistoryListResponse(items=items)
+
+
+@router.get(
+    "/{equipment_id}/history",
+    response_model=EquipmentHistoryListResponse,
+    status_code=status.HTTP_200_OK,
+)
+def list_equipment_history(
+    equipment_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
+) -> Any:
+    equipment = session.get(Equipment, equipment_id)
+    if not equipment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Equipment not found",
+        )
+    allowed_terminal_ids = _get_allowed_terminal_ids(session, current_user)
+    if allowed_terminal_ids and equipment.terminal_id not in allowed_terminal_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Equipment not found",
+        )
+
+    type_history = session.exec(
+        select(EquipmentTypeHistory).where(
+            EquipmentTypeHistory.equipment_id == equipment_id
+        )
+    ).all()
+    terminal_history = session.exec(
+        select(EquipmentTerminalHistory).where(
+            EquipmentTerminalHistory.equipment_id == equipment_id
+        )
+    ).all()
+
+    items: list[EquipmentHistoryEntry] = []
+    user_ids: set[int] = set()
+    for h in type_history:
+        if h.changed_by_user_id:
+            user_ids.add(h.changed_by_user_id)
+    for h in terminal_history:
+        if h.changed_by_user_id:
+            user_ids.add(h.changed_by_user_id)
+    user_name_by_id: dict[int, str] = {}
+    if user_ids:
+        users = session.exec(select(User).where(User.id.in_(user_ids))).all()
+        for user in users:
+            label = (
+                " ".join(filter(None, [user.name, user.last_name])).strip()
+                or user.email
+                or str(user.id)
+            )
+            user_name_by_id[user.id] = label
+    for h in type_history:
+        items.append(
+            EquipmentHistoryEntry(
+                id=f"type-{h.id}",
+                kind="type",
+                equipment_type_id=h.equipment_type_id,
+                terminal_id=None,
+                started_at=h.started_at,
+                ended_at=h.ended_at,
+                changed_by_user_id=h.changed_by_user_id,
+                changed_by_user_name=user_name_by_id.get(h.changed_by_user_id),
+            )
+        )
+    for h in terminal_history:
+        items.append(
+            EquipmentHistoryEntry(
+                id=f"terminal-{h.id}",
+                kind="terminal",
+                equipment_type_id=None,
+                terminal_id=h.terminal_id,
+                started_at=h.started_at,
+                ended_at=h.ended_at,
+                changed_by_user_id=h.changed_by_user_id,
+                changed_by_user_name=user_name_by_id.get(h.changed_by_user_id),
+            )
+        )
+
+    if not items:
+        return EquipmentHistoryListResponse(message="No records found")
+
+    items.sort(key=lambda entry: entry.started_at)
+    return EquipmentHistoryListResponse(items=items)
 
 
 

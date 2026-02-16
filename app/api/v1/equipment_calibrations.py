@@ -27,6 +27,7 @@ from app.services.supabase_storage import upload_calibration_certificate
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
 from app.utils.measurements.weight import Weight
+from app.utils.emp_weights import get_emp
 
 router = APIRouter(
     prefix="/equipment-calibrations",
@@ -90,10 +91,14 @@ def _infer_measure_from_unit(unit: str | None) -> EquipmentMeasureType | None:
         return EquipmentMeasureType.temperature
     if unit_key in {"mm", "cm", "m", "in", "ft", "millimeter", "millimeters", "centimeter", "centimeters", "meter", "meters", "inch", "inches", "foot", "feet"}:
         return EquipmentMeasureType.length
-    if unit_key in {"g", "kg", "lb", "lbs", "oz", "gram", "grams", "kilogram", "kilograms", "pound", "pounds", "ounce", "ounces"}:
+    if unit_key in {"g", "kg", "lb", "lbs", "oz", "mg", "gram", "grams", "kilogram", "kilograms", "pound", "pounds", "ounce", "ounces", "milligram", "milligrams"}:
         return EquipmentMeasureType.weight
-    if unit_key in {"api", "°api"}:
+    if unit_key in {"api"}:
         return EquipmentMeasureType.api
+    if unit_key in {"%p/v", "%pv", "p/v", "%w/v"}:
+        return EquipmentMeasureType.percent_pv
+    if unit_key in {"%", "%rh", "rh", "percent", "relativehumidity", "relative-humidity"}:
+        return EquipmentMeasureType.relative_humidity
     return None
 
 
@@ -136,6 +141,8 @@ def _normalize_uncertainty_value(
         unit_key = (unit or "g").strip().lower()
         if unit_key in {"g", "gram", "grams"}:
             return Weight.from_grams(value).as_grams
+        if unit_key in {"mg", "milligram", "milligrams"}:
+            return Weight.from_grams(value / 1000.0).as_grams
         if unit_key in {"kg", "kilogram", "kilograms"}:
             return Weight.from_kilograms(value).as_grams
         if unit_key in {"lb", "lbs", "pound", "pounds"}:
@@ -148,11 +155,27 @@ def _normalize_uncertainty_value(
         )
     if measure == EquipmentMeasureType.api:
         unit_key = (unit or "api").strip().lower()
-        if unit_key in {"api", "°api"}:
+        if unit_key in {"api"}:
             return value
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Unsupported API unit for uncertainty",
+        )
+    if measure == EquipmentMeasureType.percent_pv:
+        unit_key = (unit or "%p/v").strip().lower().replace(" ", "")
+        if unit_key in {"%p/v", "%pv", "p/v", "%w/v", "ml", "l"}:
+            return value
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported percent p/v unit for uncertainty",
+        )
+    if measure == EquipmentMeasureType.relative_humidity:
+        unit_key = (unit or "%").strip().lower().replace(" ", "")
+        if unit_key in {"%", "%rh", "rh", "percent", "relativehumidity", "relative-humidity"}:
+            return value
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported relative humidity unit for uncertainty",
         )
     return value
 
@@ -164,6 +187,28 @@ def _validate_uncertainty_max_error(
 ) -> None:
     if not results:
         return
+    emp_value = equipment.emp_value
+    if emp_value is not None and emp_value <= 0:
+        emp_value = None
+    if (
+        emp_value is None
+        and equipment.weight_class
+        and equipment.nominal_mass_value is not None
+        and equipment.nominal_mass_unit
+    ):
+        try:
+            emp_value = get_emp(
+                equipment.weight_class,
+                equipment.nominal_mass_value,
+                equipment.nominal_mass_unit,
+            )
+        except ValueError:
+            emp_value = equipment.emp_value
+    is_weight_equipment = (
+        emp_value is not None
+        and equipment.weight_class
+        and equipment.nominal_mass_value is not None
+    )
     measures = session.exec(
         select(EquipmentTypeMeasure.measure).where(
             EquipmentTypeMeasure.equipment_type_id == equipment.equipment_type_id
@@ -174,27 +219,43 @@ def _validate_uncertainty_max_error(
             EquipmentTypeMaxError.equipment_type_id == equipment.equipment_type_id
         )
     ).all()
+    if not max_errors_rows and emp_value is None:
+        return
     max_error_by_measure = {row.measure: row.max_error_value for row in max_errors_rows}
     for row in results:
-        if row.error_value is None:
+        uncertainty_value = (
+            row.uncertainty_value
+            if row.uncertainty_value is not None
+            else row.error_value
+        )
+        if uncertainty_value is None:
             continue
-        measure: EquipmentMeasureType | None = None
-        if len(measures) == 1:
-            measure = measures[0]
+        if is_weight_equipment:
+            measure = EquipmentMeasureType.weight
+            max_error = emp_value
         else:
-            measure = _infer_measure_from_unit(row.unit)
-        if measure is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se pudo determinar la medida para validar la incertidumbre.",
-            )
-        max_error = max_error_by_measure.get(measure)
+            measure: EquipmentMeasureType | None = None
+            if len(measures) == 1:
+                measure = measures[0]
+            else:
+                measure = _infer_measure_from_unit(row.unit)
+            if measure is None and emp_value is not None:
+                measure = EquipmentMeasureType.weight
+            if measure is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se pudo determinar la medida para validar la incertidumbre.",
+                )
+            if measure == EquipmentMeasureType.weight and emp_value is not None:
+                max_error = emp_value
+            else:
+                max_error = max_error_by_measure.get(measure)
         if max_error is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No se encontro error maximo para el tipo de equipo.",
             )
-        normalized = _normalize_uncertainty_value(row.error_value, measure, row.unit)
+        normalized = _normalize_uncertainty_value(uncertainty_value, measure, row.unit)
         if normalized > max_error:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -243,6 +304,13 @@ def _replace_results(
                 unit=row.unit.strip() if isinstance(row.unit, str) else None,
                 error_value=row.error_value,
                 tolerance_value=row.tolerance_value,
+                volume_value=row.volume_value,
+                systematic_error=row.systematic_error,
+                systematic_emp=row.systematic_emp,
+                random_error=row.random_error,
+                random_emp=row.random_emp,
+                uncertainty_value=row.uncertainty_value,
+                k_value=row.k_value,
                 is_ok=row.is_ok,
                 notes=row.notes,
             )

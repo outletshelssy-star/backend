@@ -43,6 +43,7 @@ def create_company(
     company = Company(
         name=company_in.name,
         company_type=company_in.company_type,
+        is_active=company_in.is_active,
         created_by_user_id=current_user.id,
     )
 

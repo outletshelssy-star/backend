@@ -13,6 +13,7 @@ from app.models.equipment_inspection import EquipmentInspection
 from app.models.equipment_measure_spec import EquipmentMeasureSpec
 from app.models.equipment_type import EquipmentType
 from app.models.equipment_type_measure import EquipmentTypeMeasure
+from app.models.equipment_type_max_error import EquipmentTypeMaxError
 from app.models.equipment_verification import (
     EquipmentVerification,
     EquipmentVerificationCreate,
@@ -40,7 +41,9 @@ from app.models.user import User
 from app.models.user_terminal import UserTerminal
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
+from app.utils.measurements.weight import Weight
 from app.utils.hydrometer import api_60f_crude
+from app.utils.emp_weights import get_emp
 
 router = APIRouter(
     prefix="/equipment-verifications",
@@ -169,6 +172,17 @@ def _is_hydrometer_type_name(equipment_type: EquipmentType | None) -> bool:
         return False
     return equipment_type.name.strip().lower() == "hidrometro"
 
+def _is_balance_type_name(equipment_type: EquipmentType | None) -> bool:
+    if equipment_type is None:
+        return False
+    return equipment_type.name.strip().lower() == "balanza analitica"
+
+
+def _is_kf_type_name(equipment_type: EquipmentType | None) -> bool:
+    if equipment_type is None:
+        return False
+    return equipment_type.name.strip().lower() == "titulador karl fischer"
+
 
 def _requires_tape_comparison(equipment_type: EquipmentType | None) -> bool:
     if equipment_type is None:
@@ -176,6 +190,32 @@ def _requires_tape_comparison(equipment_type: EquipmentType | None) -> bool:
     if equipment_type.role != EquipmentRole.working:
         return False
     return _is_tape_type_name(equipment_type)
+
+
+def _requires_balance_comparison(equipment_type: EquipmentType | None) -> bool:
+    if equipment_type is None:
+        return False
+    if equipment_type.role != EquipmentRole.working:
+        return False
+    return _is_balance_type_name(equipment_type)
+
+
+def _weight_to_grams(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower()
+    if unit_key in {"g", "gram", "grams"}:
+        return Weight.from_grams(value).as_grams
+    if unit_key in {"mg", "milligram", "milligrams"}:
+        return Weight.from_grams(value / 1000.0).as_grams
+    if unit_key in {"kg", "kilogram", "kilograms"}:
+        return Weight.from_kilograms(value).as_grams
+    if unit_key in {"lb", "lbs", "pound", "pounds"}:
+        return Weight.from_pounds(value).as_grams
+    if unit_key in {"oz", "ounce", "ounces"}:
+        return Weight.from_ounces(value).as_grams
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported weight unit",
+    )
 
 
 def _get_temperature_measure_spec(
@@ -569,6 +609,18 @@ def create_equipment_verification(
         and _requires_tape_comparison(equipment_type)
         and _has_length_measure(session, equipment_type.id)
     )
+    applies_balance_comparison_rule = (
+        equipment_type is not None
+        and _requires_balance_comparison(equipment_type)
+    )
+    applies_kf_verification_rule = (
+        equipment_type is not None
+        and _is_kf_type_name(equipment_type)
+    )
+    applies_kf_verification_rule = (
+        equipment_type is not None
+        and _is_kf_type_name(equipment_type)
+    )
     applies_hydrometer_comparison_rule = (
         equipment_type is not None
         and _is_hydrometer_type_name(equipment_type)
@@ -578,6 +630,7 @@ def create_equipment_verification(
     applies_comparison_rule = (
         applies_temperature_comparison_rule
         or applies_tape_comparison_rule
+        or applies_balance_comparison_rule
         or applies_hydrometer_comparison_rule
     )
     is_monthly = bool(
@@ -595,7 +648,19 @@ def create_equipment_verification(
     tape_avg_under_mm = 0.0
     tape_avg_ref_mm = 0.0
     tape_diff_mm = 0.0
-    if applies_comparison_rule:
+    balance_under_g = 0.0
+    balance_ref_g = 0.0
+    balance_diff_g = 0.0
+    balance_max_error_g = None
+    kf_factor_1 = 0.0
+    kf_factor_2 = 0.0
+    kf_factor_avg = 0.0
+    kf_error_rel = 0.0
+    kf_factor_1 = 0.0
+    kf_factor_2 = 0.0
+    kf_factor_avg = 0.0
+    kf_error_rel = 0.0
+    if applies_comparison_rule or applies_kf_verification_rule:
         if payload.reference_equipment_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -648,7 +713,10 @@ def create_equipment_verification(
         reference_type = session.get(EquipmentType, reference_equipment.equipment_type_id)
         if (
             reference_type is None
-            or reference_type.role != EquipmentRole.reference
+            or (
+                reference_type.role != EquipmentRole.reference
+                and not applies_kf_verification_rule
+            )
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -678,17 +746,48 @@ def create_equipment_verification(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Reference equipment must support length measure",
                 )
-        has_daily_inspection_equipment = _has_approved_daily_inspection(
-            session=session,
-            equipment_id=equipment.id,
-            day_start=day_start,
-            day_end=day_end,
+        if applies_balance_comparison_rule:
+            if reference_type is None or not reference_type.name.strip().lower().startswith("pesa"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference equipment must be a weight (pesa) reference equipment",
+                )
+            if reference_equipment.nominal_mass_value is None or not reference_equipment.nominal_mass_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference weight must have nominal mass defined",
+                )
+        equipment_inspection_days = (
+            equipment.inspection_days_override
+            if equipment.inspection_days_override is not None
+            else (equipment_type.inspection_days if equipment_type else 0)
         )
-        has_daily_inspection_reference = _has_approved_daily_inspection(
-            session=session,
-            equipment_id=reference_equipment.id,
-            day_start=day_start,
-            day_end=day_end,
+        reference_inspection_days = (
+            reference_equipment.inspection_days_override
+            if reference_equipment.inspection_days_override is not None
+            else (reference_type.inspection_days if reference_type else 0)
+        )
+        requires_equipment_inspection = (equipment_inspection_days or 0) > 0
+        requires_reference_inspection = (reference_inspection_days or 0) > 0
+        has_daily_inspection_equipment = (
+            _has_approved_daily_inspection(
+                session=session,
+                equipment_id=equipment.id,
+                day_start=day_start,
+                day_end=day_end,
+            )
+            if requires_equipment_inspection
+            else True
+        )
+        has_daily_inspection_reference = (
+            _has_approved_daily_inspection(
+                session=session,
+                equipment_id=reference_equipment.id,
+                day_start=day_start,
+                day_end=day_end,
+            )
+            if requires_reference_inspection
+            else True
         )
         if not has_daily_inspection_equipment or not has_daily_inspection_reference:
             raise HTTPException(
@@ -876,6 +975,249 @@ def create_equipment_verification(
                 comparison_message = (
                     f"Diferencia promedio de cinta {tape_diff_mm:.3f} mm fuera del limite (< 2.000 mm)."
                 )
+        elif applies_balance_comparison_rule:
+            if payload.reading_under_test_value is None or not payload.reading_under_test_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="reading_under_test_value and reading_under_test_unit are required for balance verification",
+                )
+            if reference_equipment.nominal_mass_value is None or not reference_equipment.nominal_mass_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference weight must have nominal mass defined",
+                )
+            try:
+                balance_under_g = _weight_to_grams(
+                    float(payload.reading_under_test_value),
+                    payload.reading_under_test_unit,
+                )
+                balance_ref_g = _weight_to_grams(
+                    float(reference_equipment.nominal_mass_value),
+                    reference_equipment.nominal_mass_unit,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            balance_diff_g = balance_ref_g - balance_under_g
+            balance_max_error_g = reference_equipment.emp_value
+            if (
+                balance_max_error_g is None
+                and reference_equipment.weight_class
+                and reference_equipment.nominal_mass_value is not None
+                and reference_equipment.nominal_mass_unit
+            ):
+                try:
+                    balance_max_error_g = get_emp(
+                        reference_equipment.weight_class,
+                        reference_equipment.nominal_mass_value,
+                        reference_equipment.nominal_mass_unit,
+                    )
+                except ValueError:
+                    balance_max_error_g = None
+            if balance_max_error_g is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se encontro el EMP de la pesa patron.",
+                )
+            comparison_ok = abs(balance_diff_g) <= balance_max_error_g
+            if not comparison_ok:
+                comparison_message = (
+                    "Diferencia entre pesa y balanza supera el error maximo permitido."
+                )
+    if applies_kf_verification_rule:
+        if payload.reference_equipment_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance is required for Karl Fischer standardization",
+            )
+        kf_reference = session.get(Equipment, payload.reference_equipment_id)
+        if not kf_reference:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Reference balance not found",
+            )
+        if kf_reference.id == equipment.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must be different from equipment under test",
+            )
+        if kf_reference.status != EquipmentStatus.in_use:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must be in use",
+            )
+        if kf_reference.terminal_id != equipment.terminal_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must belong to the same terminal",
+            )
+        kf_reference_type = session.get(EquipmentType, kf_reference.equipment_type_id)
+        if not _is_balance_type_name(kf_reference_type):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference equipment must be a balance",
+            )
+        if (
+            payload.kf_weight_1 is None
+            or payload.kf_volume_1 is None
+            or payload.kf_weight_2 is None
+            or payload.kf_volume_2 is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF weights and volumes are required",
+            )
+        if payload.kf_volume_1 <= 0 or payload.kf_volume_2 <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF volumes must be greater than zero",
+            )
+        kf_factor_1 = float(payload.kf_weight_1) / float(payload.kf_volume_1)
+        kf_factor_2 = float(payload.kf_weight_2) / float(payload.kf_volume_2)
+        kf_factor_avg = (kf_factor_1 + kf_factor_2) / 2.0
+        if kf_factor_avg == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF average factor cannot be zero",
+            )
+        kf_error_rel = abs(kf_factor_1 - kf_factor_2) / kf_factor_avg * 100.0
+        factors_ok = 4.5 <= kf_factor_1 <= 5.5 and 4.5 <= kf_factor_2 <= 5.5
+        rel_ok = kf_error_rel < 2.0
+        comparison_ok = factors_ok and rel_ok
+        if not comparison_ok:
+            comparison_message = (
+                "Factor fuera de 4.5-5.5 o error relativo >= 2%."
+            )
+    if applies_kf_verification_rule:
+        if payload.reference_equipment_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reference_equipment_id is required for Karl Fischer verification",
+            )
+        kf_reference = session.get(Equipment, payload.reference_equipment_id)
+        if not kf_reference:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Reference balance not found",
+            )
+        if kf_reference.id == equipment.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must be different from equipment under test",
+            )
+        if kf_reference.status != EquipmentStatus.in_use:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must be in use",
+            )
+        if kf_reference.terminal_id != equipment.terminal_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must belong to the same terminal",
+            )
+        kf_reference_type = session.get(EquipmentType, kf_reference.equipment_type_id)
+        if not _is_balance_type_name(kf_reference_type):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference equipment must be a balance",
+            )
+        if (
+            payload.kf_weight_1 is None
+            or payload.kf_volume_1 is None
+            or payload.kf_weight_2 is None
+            or payload.kf_volume_2 is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF weights and volumes are required",
+            )
+        if payload.kf_volume_1 <= 0 or payload.kf_volume_2 <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF volumes must be greater than zero",
+            )
+        kf_factor_1 = float(payload.kf_weight_1) / float(payload.kf_volume_1)
+        kf_factor_2 = float(payload.kf_weight_2) / float(payload.kf_volume_2)
+        kf_factor_avg = (kf_factor_1 + kf_factor_2) / 2.0
+        if kf_factor_avg == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF average factor cannot be zero",
+            )
+        kf_error_rel = abs(kf_factor_1 - kf_factor_2) / kf_factor_avg * 100.0
+        factors_ok = 4.5 <= kf_factor_1 <= 5.5 and 4.5 <= kf_factor_2 <= 5.5
+        rel_ok = kf_error_rel < 2.0
+        comparison_ok = factors_ok and rel_ok
+        if not comparison_ok:
+            comparison_message = (
+                "Factor fuera de 4.5-5.5 o error relativo >= 2%."
+            )
+    if applies_kf_verification_rule:
+        if payload.reference_equipment_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="reference_equipment_id is required for Karl Fischer verification",
+            )
+        kf_reference = session.get(Equipment, payload.reference_equipment_id)
+        if not kf_reference:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Reference balance not found",
+            )
+        if kf_reference.id == equipment.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must be different from equipment under test",
+            )
+        if kf_reference.status != EquipmentStatus.in_use:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must be in use",
+            )
+        if kf_reference.terminal_id != equipment.terminal_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference balance must belong to the same terminal",
+            )
+        kf_reference_type = session.get(EquipmentType, kf_reference.equipment_type_id)
+        if not _is_balance_type_name(kf_reference_type):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference equipment must be a balance",
+            )
+        if (
+            payload.kf_weight_1 is None
+            or payload.kf_volume_1 is None
+            or payload.kf_weight_2 is None
+            or payload.kf_volume_2 is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF weights and volumes are required",
+            )
+        if payload.kf_volume_1 <= 0 or payload.kf_volume_2 <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF volumes must be greater than zero",
+            )
+        kf_factor_1 = float(payload.kf_weight_1) / float(payload.kf_volume_1)
+        kf_factor_2 = float(payload.kf_weight_2) / float(payload.kf_volume_2)
+        kf_factor_avg = (kf_factor_1 + kf_factor_2) / 2.0
+        if kf_factor_avg == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="KF average factor cannot be zero",
+            )
+        kf_error_rel = abs(kf_factor_1 - kf_factor_2) / kf_factor_avg * 100.0
+        factors_ok = 4.5 <= kf_factor_1 <= 5.5 and 4.5 <= kf_factor_2 <= 5.5
+        rel_ok = kf_error_rel < 2.0
+        comparison_ok = factors_ok and rel_ok
+        if not comparison_ok:
+            comparison_message = (
+                "Factor fuera de 4.5-5.5 o error relativo >= 2%."
+            )
     existing_same_day = session.exec(
         select(EquipmentVerification).where(
             EquipmentVerification.equipment_id == equipment.id,
@@ -906,7 +1248,7 @@ def create_equipment_verification(
 
     verification_ok = all(is_ok is True for _, is_ok in evaluated_responses) and comparison_ok
     notes = payload.notes
-    if applies_comparison_rule:
+    if applies_comparison_rule or applies_kf_verification_rule:
         if applies_temperature_comparison_rule and is_monthly:
             try:
                 under_unit = payload.reading_under_test_unit
@@ -965,6 +1307,45 @@ def create_equipment_verification(
                 f"Lectura equipo: {reading_under_test_label} | "
                 f"Lectura patron: {reference_reading_label} | "
                 f"Diferencia: {delta_c:.3f} C"
+            )
+        elif applies_balance_comparison_rule:
+            ref_unit = reference_equipment.nominal_mass_unit or "g"
+            under_unit = payload.reading_under_test_unit or "g"
+            comparison_note = (
+                f"Comparacion balanza {equipment_type.name} | "
+                f"Patron ID: {payload.reference_equipment_id} | "
+                f"Pesa: {reference_equipment.nominal_mass_value} {ref_unit} | "
+                f"Lectura balanza: {payload.reading_under_test_value} {under_unit} | "
+                f"Diferencia (Pesa-Balanza): {balance_diff_g:.6f} g | "
+                f"Criterio: |Diferencia| <= {balance_max_error_g:.6g} g"
+            )
+        elif applies_kf_verification_rule:
+            comparison_note = (
+                "Verificacion Karl Fischer | "
+                f"Balanza ID: {payload.reference_equipment_id} | "
+                f"Peso1: {payload.kf_weight_1} mg | "
+                f"Volumen1: {payload.kf_volume_1} mL | "
+                f"Factor1: {kf_factor_1:.6f} | "
+                f"Peso2: {payload.kf_weight_2} mg | "
+                f"Volumen2: {payload.kf_volume_2} mL | "
+                f"Factor2: {kf_factor_2:.6f} | "
+                f"Factor promedio: {kf_factor_avg:.6f} | "
+                f"Error relativo: {kf_error_rel:.3f}% | "
+                "Criterio: Factores 4.5-5.5 mg/mL y Error < 2%"
+            )
+        elif applies_kf_verification_rule:
+            comparison_note = (
+                "Verificacion Karl Fischer | "
+                f"Balanza ID: {payload.reference_equipment_id} | "
+                f"Peso1: {payload.kf_weight_1} g | "
+                f"Volumen1: {payload.kf_volume_1} mL | "
+                f"Factor1: {kf_factor_1:.6f} | "
+                f"Peso2: {payload.kf_weight_2} g | "
+                f"Volumen2: {payload.kf_volume_2} mL | "
+                f"Factor2: {kf_factor_2:.6f} | "
+                f"Factor promedio: {kf_factor_avg:.6f} | "
+                f"Error relativo: {kf_error_rel:.3f}% | "
+                "Criterio: Factores 4.5-5.5 y Error < 2%"
             )
         else:
             work_values = ", ".join(f"{value:g}" for value in tape_under_readings)
@@ -1178,6 +1559,10 @@ def update_equipment_verification(
         and _requires_tape_comparison(equipment_type)
         and _has_length_measure(session, equipment_type.id)
     )
+    applies_balance_comparison_rule = (
+        equipment_type is not None
+        and _requires_balance_comparison(equipment_type)
+    )
     applies_hydrometer_comparison_rule = (
         equipment_type is not None
         and _is_hydrometer_type_name(equipment_type)
@@ -1187,6 +1572,7 @@ def update_equipment_verification(
     applies_comparison_rule = (
         applies_temperature_comparison_rule
         or applies_tape_comparison_rule
+        or applies_balance_comparison_rule
         or applies_hydrometer_comparison_rule
     )
     is_monthly = bool(int(verification_type.frequency_days) == 30)
@@ -1202,7 +1588,11 @@ def update_equipment_verification(
     tape_avg_under_mm = 0.0
     tape_avg_ref_mm = 0.0
     tape_diff_mm = 0.0
-    if applies_comparison_rule:
+    balance_under_g = 0.0
+    balance_ref_g = 0.0
+    balance_diff_g = 0.0
+    balance_max_error_g = None
+    if applies_comparison_rule or applies_kf_verification_rule:
         if payload.reference_equipment_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1255,7 +1645,10 @@ def update_equipment_verification(
         reference_type = session.get(EquipmentType, reference_equipment.equipment_type_id)
         if (
             reference_type is None
-            or reference_type.role != EquipmentRole.reference
+            or (
+                reference_type.role != EquipmentRole.reference
+                and not applies_kf_verification_rule
+            )
         ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1285,17 +1678,48 @@ def update_equipment_verification(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Reference equipment must support length measure",
                 )
-        has_daily_inspection_equipment = _has_approved_daily_inspection(
-            session=session,
-            equipment_id=equipment.id,
-            day_start=day_start,
-            day_end=day_end,
+        if applies_balance_comparison_rule:
+            if reference_type is None or not reference_type.name.strip().lower().startswith("pesa"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference equipment must be a weight (pesa) reference equipment",
+                )
+            if reference_equipment.nominal_mass_value is None or not reference_equipment.nominal_mass_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference weight must have nominal mass defined",
+                )
+        equipment_inspection_days = (
+            equipment.inspection_days_override
+            if equipment.inspection_days_override is not None
+            else (equipment_type.inspection_days if equipment_type else 0)
         )
-        has_daily_inspection_reference = _has_approved_daily_inspection(
-            session=session,
-            equipment_id=reference_equipment.id,
-            day_start=day_start,
-            day_end=day_end,
+        reference_inspection_days = (
+            reference_equipment.inspection_days_override
+            if reference_equipment.inspection_days_override is not None
+            else (reference_type.inspection_days if reference_type else 0)
+        )
+        requires_equipment_inspection = (equipment_inspection_days or 0) > 0
+        requires_reference_inspection = (reference_inspection_days or 0) > 0
+        has_daily_inspection_equipment = (
+            _has_approved_daily_inspection(
+                session=session,
+                equipment_id=equipment.id,
+                day_start=day_start,
+                day_end=day_end,
+            )
+            if requires_equipment_inspection
+            else True
+        )
+        has_daily_inspection_reference = (
+            _has_approved_daily_inspection(
+                session=session,
+                equipment_id=reference_equipment.id,
+                day_start=day_start,
+                day_end=day_end,
+            )
+            if requires_reference_inspection
+            else True
         )
         if not has_daily_inspection_equipment or not has_daily_inspection_reference:
             raise HTTPException(
@@ -1465,6 +1889,49 @@ def update_equipment_verification(
                 comparison_message = (
                     f"Diferencia promedio de cinta {tape_diff_mm:.3f} mm fuera del limite (< 2.000 mm)."
                 )
+        elif applies_balance_comparison_rule:
+            if payload.reading_under_test_value is None or not payload.reading_under_test_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="reading_under_test_value and reading_under_test_unit are required for balance verification",
+                )
+            if reference_equipment.nominal_mass_value is None or not reference_equipment.nominal_mass_unit:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Reference weight must have nominal mass defined",
+                )
+            try:
+                balance_under_g = _weight_to_grams(
+                    float(payload.reading_under_test_value),
+                    payload.reading_under_test_unit,
+                )
+                balance_ref_g = _weight_to_grams(
+                    float(reference_equipment.nominal_mass_value),
+                    reference_equipment.nominal_mass_unit,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            balance_diff_g = balance_ref_g - balance_under_g
+            max_error_row = session.exec(
+                select(EquipmentTypeMaxError).where(
+                    EquipmentTypeMaxError.equipment_type_id == equipment_type.id,
+                    EquipmentTypeMaxError.measure == EquipmentMeasureType.weight,
+                )
+            ).first()
+            if max_error_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se encontro error maximo para la balanza.",
+                )
+            balance_max_error_g = max_error_row.max_error_value
+            comparison_ok = abs(balance_diff_g) <= balance_max_error_g
+            if not comparison_ok:
+                comparison_message = (
+                    "Diferencia entre pesa y balanza supera el error maximo permitido."
+                )
 
     verification_ok = all(is_ok is True for _, is_ok in evaluated_responses) and comparison_ok
     notes = payload.notes
@@ -1520,6 +1987,31 @@ def update_equipment_verification(
                 f"Lectura equipo: {reading_under_test_label} | "
                 f"Lectura patron: {reference_reading_label} | "
                 f"Diferencia: {delta_c:.3f} C"
+            )
+        elif applies_balance_comparison_rule:
+            ref_unit = reference_equipment.nominal_mass_unit or "g"
+            under_unit = payload.reading_under_test_unit or "g"
+            comparison_note = (
+                f"Comparacion balanza {equipment_type.name} | "
+                f"Patron ID: {payload.reference_equipment_id} | "
+                f"Pesa: {reference_equipment.nominal_mass_value} {ref_unit} | "
+                f"Lectura balanza: {payload.reading_under_test_value} {under_unit} | "
+                f"Diferencia (Pesa-Balanza): {balance_diff_g:.6f} g | "
+                f"Criterio: |Diferencia| <= {balance_max_error_g:.6g} g"
+            )
+        elif applies_kf_verification_rule:
+            comparison_note = (
+                "Verificacion Karl Fischer | "
+                f"Balanza ID: {payload.reference_equipment_id} | "
+                f"Peso1: {payload.kf_weight_1} g | "
+                f"Volumen1: {payload.kf_volume_1} mL | "
+                f"Factor1: {kf_factor_1:.6f} | "
+                f"Peso2: {payload.kf_weight_2} g | "
+                f"Volumen2: {payload.kf_volume_2} mL | "
+                f"Factor2: {kf_factor_2:.6f} | "
+                f"Factor promedio: {kf_factor_avg:.6f} | "
+                f"Error relativo: {kf_error_rel:.3f}% | "
+                "Criterio: Factores 4.5-5.5 y Error < 2%"
             )
         else:
             work_values = ", ".join(f"{value:g}" for value in tape_under_readings)

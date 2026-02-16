@@ -88,7 +88,14 @@ def _build_analysis(
         api_60f=api_60f,
         hydrometer_id=analysis.hydrometer_id,
         thermometer_id=analysis.thermometer_id,
+        kf_equipment_id=analysis.kf_equipment_id,
         water_value=analysis.water_value,
+        water_sample_weight=analysis.water_sample_weight,
+        water_balance_id=analysis.water_balance_id,
+        water_sample_weight_unit=analysis.water_sample_weight_unit,
+        water_volume_consumed=analysis.water_volume_consumed,
+        water_volume_unit=analysis.water_volume_unit,
+        kf_factor_avg=analysis.kf_factor_avg,
     )
 
 
@@ -128,13 +135,20 @@ def create_sample(
     session.refresh(terminal)
 
     code = f"{_terminal_code(terminal.name, terminal.terminal_code)}-{seq:04d}"
+    identifier = str(payload.identifier or "").strip()
+    if not identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Identifier is required",
+        )
+
     sample = Sample(
         terminal_id=terminal.id,
         code=code,
         sequence=seq,
         created_by_user_id=current_user.id,
         product_name="Crudo",
-        identifier=payload.identifier,
+        identifier=identifier,
     )
     session.add(sample)
     session.commit()
@@ -249,6 +263,26 @@ def update_sample(
 
     analysis_rows: list[SampleAnalysis] = []
     if payload.analyses is not None:
+        existing_analyses = session.exec(
+            select(SampleAnalysis).where(SampleAnalysis.sample_id == sample.id)
+        ).all()
+        keep_types = {analysis.analysis_type for analysis in payload.analyses}
+        to_delete = [
+            analysis
+            for analysis in existing_analyses
+            if str(analysis.analysis_type) not in keep_types
+        ]
+        analysis_ids = [analysis.id for analysis in to_delete if analysis.id is not None]
+        if analysis_ids:
+            session.exec(
+                delete(SampleAnalysisHistory).where(
+                    SampleAnalysisHistory.sample_analysis_id.in_(analysis_ids)
+                )
+            )
+        if analysis_ids:
+            session.exec(delete(SampleAnalysis).where(SampleAnalysis.id.in_(analysis_ids)))
+        if analysis_ids:
+            session.commit()
         for analysis in payload.analyses:
             row_was_new = False
             row = None
@@ -287,7 +321,35 @@ def update_sample(
             row.lectura_api = analysis.lectura_api
             row.hydrometer_id = analysis.hydrometer_id
             row.thermometer_id = analysis.thermometer_id
+            row.kf_equipment_id = analysis.kf_equipment_id
             row.water_value = analysis.water_value
+            row.water_sample_weight = analysis.water_sample_weight
+            row.water_balance_id = analysis.water_balance_id
+            row.water_sample_weight_unit = analysis.water_sample_weight_unit
+            row.water_volume_consumed = analysis.water_volume_consumed
+            row.water_volume_unit = analysis.water_volume_unit
+            if (
+                analysis.analysis_type == SampleAnalysisType.water_astm_4377
+                and analysis.water_value is not None
+                and (
+                    analysis.kf_factor_avg is None
+                    or analysis.kf_equipment_id is None
+                    or analysis.water_balance_id is None
+                    or analysis.water_sample_weight is None
+                    or analysis.water_sample_weight_unit is None
+                    or analysis.water_volume_consumed is None
+                    or analysis.water_volume_unit is None
+                )
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "kf_factor_avg, kf_equipment_id, water_balance_id, and "
+                        "water_sample_weight with unit, and water volume with unit are required "
+                        "for water analysis"
+                    ),
+                )
+            row.kf_factor_avg = analysis.kf_factor_avg
             if str(row.analysis_type) == SampleAnalysisType.api_astm_1298:
                 if row.temp_obs_f is not None and row.lectura_api is not None:
                     row.api_60f = api_60f_crude(row.temp_obs_f, row.lectura_api)

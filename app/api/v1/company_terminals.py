@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from typing import Any
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
@@ -14,6 +14,8 @@ from app.models.company_terminal import (
     CompanyTerminalReadWithIncludes,
     CompanyTerminalUpdate,
 )
+from app.models.external_analysis_record import ExternalAnalysisRecord
+from app.models.external_analysis_terminal import ExternalAnalysisTerminal
 from app.models.enums import UserType
 from app.models.user import User
 from app.models.user_terminal import UserTerminal
@@ -61,9 +63,39 @@ def create_company_terminal(
             detail="Admin company not found",
         )
 
+    if terminal_in.has_lab and terminal_in.lab_terminal_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="lab_terminal_id must be empty when has_lab is true",
+        )
+    if not terminal_in.has_lab and terminal_in.lab_terminal_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="lab_terminal_id is required when has_lab is false",
+        )
+    if terminal_in.lab_terminal_id is not None:
+        lab_terminal = session.get(CompanyTerminal, terminal_in.lab_terminal_id)
+        if not lab_terminal:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lab terminal not found",
+            )
+        if not lab_terminal.has_lab:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lab terminal must have its own lab",
+            )
+        if lab_terminal.owner_company_id != owner_company.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lab terminal must belong to the same owner company",
+            )
+
     terminal = CompanyTerminal(
         name=terminal_in.name,
         is_active=terminal_in.is_active,
+        has_lab=terminal_in.has_lab,
+        lab_terminal_id=terminal_in.lab_terminal_id,
         block_id=terminal_in.block_id,
         owner_company_id=owner_company.id,
         admin_company_id=terminal_in.admin_company_id,
@@ -255,6 +287,45 @@ def update_company_terminal(
             detail="Admin company not found",
         )
 
+    if update_data.get("has_lab") is True and "lab_terminal_id" not in update_data:
+        update_data["lab_terminal_id"] = None
+
+    has_lab = update_data.get("has_lab", terminal.has_lab)
+    lab_terminal_id = update_data.get("lab_terminal_id", terminal.lab_terminal_id)
+
+    if has_lab and lab_terminal_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="lab_terminal_id must be empty when has_lab is true",
+        )
+    if not has_lab and lab_terminal_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="lab_terminal_id is required when has_lab is false",
+        )
+    if lab_terminal_id is not None:
+        if lab_terminal_id == terminal.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lab terminal cannot reference itself",
+            )
+        lab_terminal = session.get(CompanyTerminal, lab_terminal_id)
+        if not lab_terminal:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lab terminal not found",
+            )
+        if not lab_terminal.has_lab:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lab terminal must have its own lab",
+            )
+        if lab_terminal.owner_company_id != owner_company.id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Lab terminal must belong to the same owner company",
+            )
+
     for field, value in update_data.items():
         setattr(terminal, field, value)
 
@@ -282,6 +353,19 @@ def delete_company_terminal(
         )
 
     terminal_data = CompanyTerminalReadWithIncludes(**terminal.model_dump())
+    session.exec(
+        delete(ExternalAnalysisRecord).where(
+            ExternalAnalysisRecord.terminal_id == terminal_id
+        )
+    )
+    session.exec(
+        delete(ExternalAnalysisTerminal).where(
+            ExternalAnalysisTerminal.terminal_id == terminal_id
+        )
+    )
+    session.exec(
+        delete(UserTerminal).where(UserTerminal.terminal_id == terminal_id)
+    )
     session.delete(terminal)
     session.commit()
     return CompanyTerminalDeleteResponse(

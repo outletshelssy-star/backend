@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
@@ -29,7 +29,9 @@ from app.models.equipment_type_verification import (
     EquipmentTypeVerification,
     EquipmentTypeVerificationRead,
 )
+from app.models.equipment_type_verification_item import EquipmentTypeVerificationItem
 from app.models.equipment_type_role_history import EquipmentTypeRoleHistory
+from app.models.equipment_type_history import EquipmentTypeHistory
 from app.models.user import User
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
@@ -84,6 +86,7 @@ def create_equipment_type(
         inspection_days=equipment_type_in.inspection_days,
         observations=equipment_type_in.observations,
         is_active=equipment_type_in.is_active,
+        is_lab=equipment_type_in.is_lab,
         created_by_user_id=current_user.id,
     )
 
@@ -194,10 +197,26 @@ def create_equipment_type(
                 ) from exc
         elif max_error.measure == EquipmentMeasureType.api:
             unit_key = max_error.unit.strip().lower()
-            if unit_key not in {"api", "°api"}:
+            if unit_key not in {"api"}:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Unsupported API unit",
+                )
+            normalized_value = max_error.max_error_value
+        elif max_error.measure == EquipmentMeasureType.percent_pv:
+            unit_key = max_error.unit.strip().lower().replace(" ", "")
+            if unit_key not in {"%p/v", "%pv", "p/v", "%w/v"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Unsupported percent p/v unit",
+                )
+            normalized_value = max_error.max_error_value
+        elif max_error.measure == EquipmentMeasureType.relative_humidity:
+            unit_key = max_error.unit.strip().lower().replace(" ", "")
+            if unit_key not in {"%", "%rh", "rh", "percent", "relativehumidity"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Unsupported relative humidity unit",
                 )
             normalized_value = max_error.max_error_value
         else:
@@ -560,10 +579,26 @@ def update_equipment_type(
                     ) from exc
             elif max_error.measure == EquipmentMeasureType.api:
                 unit_key = max_error.unit.strip().lower()
-                if unit_key not in {"api", "°api"}:
+                if unit_key not in {"api"}:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Unsupported API unit",
+                    )
+                normalized_value = max_error.max_error_value
+            elif max_error.measure == EquipmentMeasureType.percent_pv:
+                unit_key = max_error.unit.strip().lower().replace(" ", "")
+                if unit_key not in {"%p/v", "%pv", "p/v", "%w/v"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Unsupported percent p/v unit",
+                    )
+                normalized_value = max_error.max_error_value
+            elif max_error.measure == EquipmentMeasureType.relative_humidity:
+                unit_key = max_error.unit.strip().lower().replace(" ", "")
+                if unit_key not in {"%", "%rh", "rh", "percent", "relativehumidity"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Unsupported relative humidity unit",
                     )
                 normalized_value = max_error.max_error_value
             else:
@@ -655,34 +690,41 @@ def delete_equipment_type(
         from_attributes=True,
     )
 
-    measures_rows = session.exec(
-        select(EquipmentTypeMeasure).where(
-            EquipmentTypeMeasure.equipment_type_id == equipment_type.id
+    session.exec(
+        delete(EquipmentTypeVerificationItem).where(
+            EquipmentTypeVerificationItem.equipment_type_id == equipment_type.id
         )
-    ).all()
-    for item in measures_rows:
-        session.delete(item)
-    max_errors_rows = session.exec(
-        select(EquipmentTypeMaxError).where(
-            EquipmentTypeMaxError.equipment_type_id == equipment_type.id
+    )
+    session.exec(
+        delete(EquipmentTypeVerification).where(
+            EquipmentTypeVerification.equipment_type_id == equipment_type.id
         )
-    ).all()
-    for item in max_errors_rows:
-        session.delete(item)
-    inspection_items_rows = session.exec(
-        select(EquipmentTypeInspectionItem).where(
+    )
+    session.exec(
+        delete(EquipmentTypeInspectionItem).where(
             EquipmentTypeInspectionItem.equipment_type_id == equipment_type.id
         )
-    ).all()
-    for item in inspection_items_rows:
-        session.delete(item)
-    role_history_rows = session.exec(
-        select(EquipmentTypeRoleHistory).where(
+    )
+    session.exec(
+        delete(EquipmentTypeMeasure).where(
+            EquipmentTypeMeasure.equipment_type_id == equipment_type.id
+        )
+    )
+    session.exec(
+        delete(EquipmentTypeMaxError).where(
+            EquipmentTypeMaxError.equipment_type_id == equipment_type.id
+        )
+    )
+    session.exec(
+        delete(EquipmentTypeRoleHistory).where(
             EquipmentTypeRoleHistory.equipment_type_id == equipment_type.id
         )
-    ).all()
-    for item in role_history_rows:
-        session.delete(item)
+    )
+    session.exec(
+        delete(EquipmentTypeHistory).where(
+            EquipmentTypeHistory.equipment_type_id == equipment_type.id
+        )
+    )
 
     session.delete(equipment_type)
     session.commit()

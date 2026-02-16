@@ -16,6 +16,7 @@ from app.api.v1 import (
     equipment_type_inspection_items,
     equipment_type_verifications,
     equipment_type_verification_items,
+    external_analyses,
     users,
 )
 
@@ -30,6 +31,7 @@ api_router.include_router(equipment_type.router)
 api_router.include_router(equipment_type_inspection_items.router)
 api_router.include_router(equipment_type_verifications.router)
 api_router.include_router(equipment_type_verification_items.router)
+api_router.include_router(external_analyses.router)
 api_router.include_router(equipment_inspections.router)
 api_router.include_router(equipment_verifications.router)
 api_router.include_router(equipment_calibrations.router)

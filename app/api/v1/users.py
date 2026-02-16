@@ -47,7 +47,7 @@ def _to_user_read_with_company(
         company = session.get(Company, user.company_id)
         if company:
             company_ref = CompanyRef(
-                **company.model_dump(include={"id", "name", "company_type"})
+                **company.model_dump(include={"id", "name", "company_type", "is_active"})
             )
     terminal_refs: list[CompanyTerminalRef] = []
     terminal_ids: list[int] = []
