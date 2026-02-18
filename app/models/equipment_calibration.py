@@ -12,7 +12,6 @@ class EquipmentCalibration(SQLModel, table=True):
     )
     created_by_user_id: int = Field(foreign_key="user.id")
     calibration_company_id: int | None = Field(default=None, foreign_key="company.id")
-    calibration_company_name: str | None = None
     certificate_number: str = Field(default="PENDIENTE")
     certificate_pdf_url: str | None = None
     notes: str | None = None
@@ -60,7 +59,6 @@ class EquipmentCalibrationResultCreate(SQLModel):
 class EquipmentCalibrationCreate(SQLModel):
     calibrated_at: datetime | None = None
     calibration_company_id: int | None = None
-    calibration_company_name: str | None = None
     certificate_number: str
     notes: str | None = None
     results: list[EquipmentCalibrationResultCreate] = Field(default_factory=list)
@@ -69,7 +67,6 @@ class EquipmentCalibrationCreate(SQLModel):
 class EquipmentCalibrationUpdate(SQLModel):
     calibrated_at: datetime | None = None
     calibration_company_id: int | None = None
-    calibration_company_name: str | None = None
     certificate_number: str | None = None
     certificate_pdf_url: str | None = None
     notes: str | None = None
@@ -102,7 +99,6 @@ class EquipmentCalibrationRead(SQLModel):
     calibrated_at: datetime
     created_by_user_id: int
     calibration_company_id: int | None
-    calibration_company_name: str | None
     certificate_number: str
     certificate_pdf_url: str | None
     notes: str | None

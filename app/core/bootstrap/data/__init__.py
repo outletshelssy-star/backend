@@ -1,6 +1,7 @@
 from app.core.bootstrap.data.companies import (
     DEFAULT_BLOCKS,
     DEFAULT_COMPANIES,
+    DEFAULT_INACTIVE_BLOCKS,
     DEFAULT_PRIMARY_COMPANY_NAME,
     DEFAULT_TERMINALS,
     DEFAULT_USERS,
@@ -14,6 +15,7 @@ from app.core.bootstrap.data.equipment_types import (
 __all__ = [
     "DEFAULT_BLOCKS",
     "DEFAULT_COMPANIES",
+    "DEFAULT_INACTIVE_BLOCKS",
     "DEFAULT_PRIMARY_COMPANY_NAME",
     "DEFAULT_TERMINALS",
     "DEFAULT_USERS",

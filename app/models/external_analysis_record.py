@@ -37,6 +37,18 @@ class ExternalAnalysisRecordCreate(SQLModel):
     notes: str | None = None
 
 
+class ExternalAnalysisRecordUpdate(SQLModel):
+    analysis_type_id: int | None = None
+    analysis_company_id: int | None = None
+    performed_at: datetime | None = None
+    report_number: str | None = None
+    result_value: float | None = None
+    result_unit: str | None = None
+    result_uncertainty: float | None = None
+    method: str | None = None
+    notes: str | None = None
+
+
 class ExternalAnalysisRecordRead(SQLModel):
     id: int
     terminal_id: int

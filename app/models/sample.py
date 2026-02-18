@@ -14,6 +14,7 @@ class SampleBase(SQLModel):
     identifier: str | None = Field(default=None, max_length=64)
     product_name: str = Field(default="Crudo")
     analyzed_at: datetime | None = None
+    thermohygrometer_id: int | None = Field(default=None, foreign_key="equipment.id")
     lab_humidity: float | None = None
     lab_temperature: float | None = None
 
@@ -117,6 +118,7 @@ class SampleAnalysisUpdate(SQLModel):
 class SampleUpdate(SQLModel):
     product_name: str | None = None
     analyzed_at: datetime | None = None
+    thermohygrometer_id: int | None = None
     lab_humidity: float | None = None
     lab_temperature: float | None = None
     identifier: str | None = None
@@ -153,6 +155,7 @@ class SampleRead(SQLModel):
     identifier: str | None
     product_name: str
     analyzed_at: datetime | None
+    thermohygrometer_id: int | None = None
     lab_humidity: float | None
     lab_temperature: float | None
     analyses: list[SampleAnalysisRead] = Field(default_factory=list)

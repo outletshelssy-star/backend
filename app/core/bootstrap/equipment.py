@@ -15,6 +15,7 @@ from app.models.equipment_measure_spec import EquipmentMeasureSpec
 from app.models.equipment_type import EquipmentType
 from app.models.equipment_type_history import EquipmentTypeHistory
 from app.models.user import User
+from app.utils.emp_weights import get_emp
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
 from app.utils.measurements.weight import Weight
@@ -131,6 +132,21 @@ def ensure_default_equipment(session: Session) -> None:
                 )
             ).first() or default_terminal
 
+        weight_class = data.get("weight_class")
+        nominal_mass_value = data.get("nominal_mass_value")
+        nominal_mass_unit = data.get("nominal_mass_unit")
+        emp_value = data.get("emp_value")
+        if (
+            weight_class is not None
+            or nominal_mass_value is not None
+            or nominal_mass_unit is not None
+        ):
+            if not weight_class or nominal_mass_value is None or not nominal_mass_unit:
+                raise RuntimeError(
+                    "weight_class, nominal_mass_value and nominal_mass_unit are required together"
+                )
+            emp_value = get_emp(weight_class, nominal_mass_value, nominal_mass_unit)
+
         equipment = Equipment(
             serial=data["serial"],
             model=data["model"],
@@ -143,6 +159,10 @@ def ensure_default_equipment(session: Session) -> None:
             owner_company_id=company.id,
             terminal_id=terminal.id,
             created_by_user_id=superadmin.id,
+            weight_class=weight_class,
+            nominal_mass_value=nominal_mass_value,
+            nominal_mass_unit=nominal_mass_unit,
+            emp_value=emp_value,
         )
         session.add(equipment)
         session.commit()

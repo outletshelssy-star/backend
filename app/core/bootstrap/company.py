@@ -3,6 +3,7 @@ from sqlmodel import Session, select
 from app.core.bootstrap.data import (
     DEFAULT_BLOCKS,
     DEFAULT_COMPANIES,
+    DEFAULT_INACTIVE_BLOCKS,
     DEFAULT_PRIMARY_COMPANY_NAME,
     DEFAULT_TERMINALS,
     DEFAULT_USERS,
@@ -119,7 +120,7 @@ def ensure_default_company(session: Session) -> None:
             continue
         new_block = CompanyBlock(
             name=name,
-            is_active=True,
+            is_active=name not in DEFAULT_INACTIVE_BLOCKS,
             company_id=primary_company.id,
             created_by_user_id=superadmin.id,
         )
