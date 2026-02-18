@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from uuid import uuid4
+import re
+from datetime import datetime
 
 from fastapi import HTTPException, UploadFile, status
 from supabase import create_client
@@ -59,7 +60,22 @@ def upload_user_photo(file: UploadFile, user_id: int) -> str:
     return public_url
 
 
-def upload_calibration_certificate(file: UploadFile, calibration_id: int) -> str:
+def upload_calibration_certificate(
+    file: UploadFile,
+    calibration_id: int,
+    equipment_serial: str | None = None,
+    equipment_type_name: str | None = None,
+    calibrated_at: datetime | None = None,
+) -> str:
+    if file.file:
+        file.file.seek(0, 2)
+        size_bytes = file.file.tell()
+        file.file.seek(0)
+        if size_bytes > 2 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="El PDF no debe superar 2MB.",
+            )
     content_type = (file.content_type or "").lower()
     filename = (file.filename or "").lower()
     if content_type != "application/pdf" and not filename.endswith(".pdf"):
@@ -76,7 +92,13 @@ def upload_calibration_certificate(file: UploadFile, calibration_id: int) -> str
         )
 
     file_bytes = file.file.read()
-    path = f"calibration_certificates/{calibration_id}/certificate.pdf"
+    raw_type = (equipment_type_name or "Equipo").strip()
+    safe_type = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_type)
+    raw_serial = (equipment_serial or f"CAL-{calibration_id}").strip()
+    safe_serial = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_serial)
+    date_segment = calibrated_at.strftime("%Y%m%d") if calibrated_at else "sin-fecha"
+    filename = f"{safe_type} - {safe_serial} - {date_segment}.pdf"
+    path = f"calibration_certificates/{calibration_id}/{filename}"
 
     client = _get_client()
     storage = client.storage.from_(settings.supabase_storage_bucket)
