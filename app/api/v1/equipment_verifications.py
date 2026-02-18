@@ -1321,7 +1321,7 @@ def create_equipment_verification(
             )
         elif applies_kf_verification_rule:
             comparison_note = (
-                "Verificacion Karl Fischer | "
+                "[[KF_DATA]] Verificacion Karl Fischer | "
                 f"Balanza ID: {payload.reference_equipment_id} | "
                 f"Peso1: {payload.kf_weight_1} mg | "
                 f"Volumen1: {payload.kf_volume_1} mL | "
@@ -1335,7 +1335,7 @@ def create_equipment_verification(
             )
         elif applies_kf_verification_rule:
             comparison_note = (
-                "Verificacion Karl Fischer | "
+                "[[KF_DATA]] Verificacion Karl Fischer | "
                 f"Balanza ID: {payload.reference_equipment_id} | "
                 f"Peso1: {payload.kf_weight_1} g | "
                 f"Volumen1: {payload.kf_volume_1} mL | "
@@ -1427,7 +1427,7 @@ def update_equipment_verification(
     payload: EquipmentVerificationUpdate,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.admin, UserType.superadmin)
+        require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentVerificationRead:
     if current_user.id is None:
@@ -1563,6 +1563,10 @@ def update_equipment_verification(
         equipment_type is not None
         and _requires_balance_comparison(equipment_type)
     )
+    applies_kf_verification_rule = (
+        equipment_type is not None
+        and _is_kf_type_name(equipment_type)
+    )
     applies_hydrometer_comparison_rule = (
         equipment_type is not None
         and _is_hydrometer_type_name(equipment_type)
@@ -1592,6 +1596,10 @@ def update_equipment_verification(
     balance_ref_g = 0.0
     balance_diff_g = 0.0
     balance_max_error_g = None
+    kf_factor_1 = 0.0
+    kf_factor_2 = 0.0
+    kf_factor_avg = 0.0
+    kf_error_rel = 0.0
     if applies_comparison_rule or applies_kf_verification_rule:
         if payload.reference_equipment_id is None:
             raise HTTPException(
@@ -1935,7 +1943,7 @@ def update_equipment_verification(
 
     verification_ok = all(is_ok is True for _, is_ok in evaluated_responses) and comparison_ok
     notes = payload.notes
-    if applies_comparison_rule:
+    if applies_comparison_rule or applies_kf_verification_rule:
         if applies_temperature_comparison_rule and is_monthly:
             under_unit = payload.reading_under_test_unit or ''
             ref_unit = payload.reference_reading_unit or ''
@@ -2001,7 +2009,7 @@ def update_equipment_verification(
             )
         elif applies_kf_verification_rule:
             comparison_note = (
-                "Verificacion Karl Fischer | "
+                "[[KF_DATA]] Verificacion Karl Fischer | "
                 f"Balanza ID: {payload.reference_equipment_id} | "
                 f"Peso1: {payload.kf_weight_1} g | "
                 f"Volumen1: {payload.kf_volume_1} mL | "

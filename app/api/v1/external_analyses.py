@@ -12,6 +12,7 @@ from app.models.external_analysis_record import (
     ExternalAnalysisRecordCreate,
     ExternalAnalysisRecordListResponse,
     ExternalAnalysisRecordRead,
+    ExternalAnalysisRecordUpdate,
 )
 from app.services.supabase_storage import upload_external_analysis_report
 from app.models.external_analysis_terminal import (
@@ -466,3 +467,89 @@ def upload_external_analysis_report_file(
         notes=record.notes,
         created_by_user_id=record.created_by_user_id,
     )
+
+
+@router.patch(
+    "/records/{record_id}",
+    response_model=ExternalAnalysisRecordRead,
+)
+def update_external_analysis_record(
+    record_id: int,
+    payload: ExternalAnalysisRecordUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
+) -> ExternalAnalysisRecordRead:
+    record = session.get(ExternalAnalysisRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="External analysis record not found")
+    _check_terminal_access(session, current_user, record.terminal_id)
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "analysis_type_id" in update_data:
+        analysis_type = session.get(ExternalAnalysisType, update_data["analysis_type_id"])
+        if not analysis_type:
+            raise HTTPException(status_code=404, detail="External analysis type not found")
+    if "analysis_company_id" in update_data:
+        if update_data["analysis_company_id"] is not None:
+            analysis_company = session.get(Company, update_data["analysis_company_id"])
+            if not analysis_company:
+                raise HTTPException(status_code=404, detail="Company not found")
+        else:
+            analysis_company = None
+    else:
+        analysis_company = None
+    if "performed_at" in update_data and update_data["performed_at"] is not None:
+        update_data["performed_at"] = _as_utc(update_data["performed_at"])
+
+    for key, value in update_data.items():
+        setattr(record, key, value)
+
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+
+    analysis_type = session.get(ExternalAnalysisType, record.analysis_type_id)
+    analysis_type_name = analysis_type.name if analysis_type else ""
+    analysis_company_name = None
+    if record.analysis_company_id is not None:
+        analysis_company = session.get(Company, record.analysis_company_id)
+        analysis_company_name = analysis_company.name if analysis_company else None
+    return ExternalAnalysisRecordRead(
+        id=record.id,
+        terminal_id=record.terminal_id,
+        analysis_type_id=record.analysis_type_id,
+        analysis_type_name=analysis_type_name,
+        analysis_company_id=record.analysis_company_id,
+        analysis_company_name=analysis_company_name,
+        performed_at=record.performed_at,
+        report_number=record.report_number,
+        report_pdf_url=record.report_pdf_url,
+        result_value=record.result_value,
+        result_unit=record.result_unit,
+        result_uncertainty=record.result_uncertainty,
+        method=record.method,
+        notes=record.notes,
+        created_by_user_id=record.created_by_user_id,
+    )
+
+
+@router.delete(
+    "/records/{record_id}",
+    status_code=status.HTTP_200_OK,
+)
+def delete_external_analysis_record(
+    record_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(
+        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+    ),
+) -> dict:
+    record = session.get(ExternalAnalysisRecord, record_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="External analysis record not found")
+    _check_terminal_access(session, current_user, record.terminal_id)
+    session.delete(record)
+    session.commit()
+    return {"message": "External analysis record deleted"}

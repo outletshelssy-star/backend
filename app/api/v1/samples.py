@@ -172,6 +172,7 @@ def create_sample(
         identifier=sample.identifier,
         product_name=sample.product_name,
         analyzed_at=sample.analyzed_at,
+        thermohygrometer_id=sample.thermohygrometer_id,
         lab_humidity=sample.lab_humidity,
         lab_temperature=sample.lab_temperature,
         analyses=[
@@ -218,6 +219,7 @@ def list_samples(
                 identifier=sample.identifier,
                 product_name=sample.product_name,
                 analyzed_at=_as_utc(sample.analyzed_at) if sample.analyzed_at else None,
+                thermohygrometer_id=sample.thermohygrometer_id,
                 lab_humidity=sample.lab_humidity,
                 lab_temperature=sample.lab_temperature,
                 analyses=[
@@ -250,6 +252,7 @@ def update_sample(
         )
     _check_terminal_access(session, current_user, sample.terminal_id)
 
+    update_data = payload.model_dump(exclude_unset=True)
     if payload.product_name is not None:
         sample.product_name = payload.product_name
     if payload.analyzed_at is not None:
@@ -258,6 +261,8 @@ def update_sample(
         sample.lab_humidity = payload.lab_humidity
     if payload.lab_temperature is not None:
         sample.lab_temperature = payload.lab_temperature
+    if "thermohygrometer_id" in update_data:
+        sample.thermohygrometer_id = update_data.get("thermohygrometer_id")
     if payload.identifier is not None:
         sample.identifier = payload.identifier
 
@@ -413,6 +418,7 @@ def update_sample(
         identifier=sample.identifier,
         product_name=sample.product_name,
         analyzed_at=_as_utc(sample.analyzed_at) if sample.analyzed_at else None,
+        thermohygrometer_id=sample.thermohygrometer_id,
         lab_humidity=sample.lab_humidity,
         lab_temperature=sample.lab_temperature,
         analyses=[

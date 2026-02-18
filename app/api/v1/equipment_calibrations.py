@@ -9,6 +9,7 @@ from app.db.session import get_session
 from app.models.company import Company
 from app.models.enums import EquipmentMeasureType, UserType
 from app.models.equipment import Equipment
+from app.models.equipment_type import EquipmentType
 from app.models.equipment_calibration import (
     EquipmentCalibration,
     EquipmentCalibrationCreate,
@@ -44,17 +45,11 @@ def _as_utc(dt_value: datetime) -> datetime:
 def _validate_company(
     session: Session,
     calibration_company_id: int | None,
-    calibration_company_name: str | None,
-) -> tuple[int | None, str | None]:
-    cleaned_name = (
-        calibration_company_name.strip()
-        if isinstance(calibration_company_name, str)
-        else None
-    )
-    if not calibration_company_id and not cleaned_name:
+):
+    if not calibration_company_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="calibration_company_id or calibration_company_name is required",
+            detail="calibration_company_id is required",
         )
     if calibration_company_id:
         company = session.get(Company, calibration_company_id)
@@ -63,7 +58,7 @@ def _validate_company(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Calibration company not found",
             )
-    return calibration_company_id, cleaned_name
+    return calibration_company_id
 
 
 def _check_terminal_access(
@@ -344,10 +339,9 @@ def create_equipment_calibration(
         )
     _check_terminal_access(session, current_user, equipment)
 
-    calibration_company_id, calibration_company_name = _validate_company(
+    calibration_company_id = _validate_company(
         session,
         payload.calibration_company_id,
-        payload.calibration_company_name,
     )
     if not payload.certificate_number or not payload.certificate_number.strip():
         raise HTTPException(
@@ -362,7 +356,6 @@ def create_equipment_calibration(
         calibrated_at=calibrated_at,
         created_by_user_id=current_user.id,
         calibration_company_id=calibration_company_id,
-        calibration_company_name=calibration_company_name,
         certificate_number=payload.certificate_number.strip(),
         notes=payload.notes,
     )
@@ -466,17 +459,12 @@ def update_equipment_calibration(
 
     if payload.calibrated_at is not None:
         calibration.calibrated_at = _as_utc(payload.calibrated_at)
-    if (
-        payload.calibration_company_id is not None
-        or payload.calibration_company_name is not None
-    ):
-        company_id, company_name = _validate_company(
+    if payload.calibration_company_id is not None:
+        company_id = _validate_company(
             session,
             payload.calibration_company_id,
-            payload.calibration_company_name,
         )
         calibration.calibration_company_id = company_id
-        calibration.calibration_company_name = company_name
     if payload.certificate_number is not None:
         calibration.certificate_number = payload.certificate_number
     if payload.notes is not None:
@@ -527,7 +515,17 @@ def upload_equipment_calibration_certificate(
         )
     _check_terminal_access(session, current_user, equipment)
 
-    certificate_url = upload_calibration_certificate(file, calibration_id)
+    equipment_type_name = None
+    if equipment.equipment_type_id:
+        equipment_type = session.get(EquipmentType, equipment.equipment_type_id)
+        equipment_type_name = equipment_type.name if equipment_type else None
+    certificate_url = upload_calibration_certificate(
+        file,
+        calibration_id,
+        equipment_serial=equipment.serial,
+        equipment_type_name=equipment_type_name,
+        calibrated_at=calibration.calibrated_at,
+    )
     calibration.certificate_pdf_url = certificate_url
     session.add(calibration)
     session.commit()
