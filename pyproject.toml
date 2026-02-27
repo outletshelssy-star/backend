@@ -6,17 +6,15 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "alembic>=1.18.1",
-    "asyncpg>=0.31.0",
     "fastapi[standard]>=0.128.0",
     "pydantic-settings>=2.6.0",
     "psycopg2>=2.9.11",
-    "python-dotenv>=1.2.1",
     "supabase>=2.4.0",
     "sqlalchemy>=2.0.45",
     "sqlmodel>=0.0.31",
-    "passlib[bcrypt]==1.7.4",
-    "bcrypt<4",
+    "bcrypt>=4",
     "python-jose[cryptography]>=3.5.0",
+    "argon2-cffi>=25.1.0",
 ]
 
 [dependency-groups]
@@ -41,7 +39,7 @@ build-backend = "setuptools.build_meta"
 # -------------------------
 [tool.ruff]
 target-version = "py313"
-line-length = 88
+line-length = 120
 fix = true
 # Carpetas/archivos a ignorar
 exclude = [".venv", "__pycache__", "alembic", "migrations"]
@@ -91,6 +89,11 @@ pretty = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # pyiceberg (dependencia transitiva de supabase) usa APIs deprecadas de pydantic y pyparsing
+    "ignore::DeprecationWarning:pyiceberg.*",
+    "ignore:.*deprecated.*:UserWarning:pyiceberg.*",
+]
 
 [tool.pyright]
 typeCheckingMode = "basic"
