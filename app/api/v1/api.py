@@ -1,3 +1,5 @@
+"""Router principal de la API v1."""
+
 from fastapi import APIRouter
 
 from app.api.v1 import (
@@ -6,17 +8,17 @@ from app.api.v1 import (
     company_blocks,
     company_terminals,
     equipment,
-    equipment_readings,
     equipment_calibrations,
     equipment_inspections,
-    equipment_verifications,
-    hydrometer,
-    samples,
+    equipment_readings,
     equipment_type,
     equipment_type_inspection_items,
-    equipment_type_verifications,
     equipment_type_verification_items,
+    equipment_type_verifications,
+    equipment_verifications,
     external_analyses,
+    hydrometer,
+    samples,
     users,
 )
 

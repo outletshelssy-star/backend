@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select, func, delete
+from sqlmodel import Session, delete, func, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
@@ -65,6 +65,7 @@ def _check_terminal_access(
 
 def _build_analysis(
     analysis: SampleAnalysisCreate,
+    sample_id: int,
 ) -> SampleAnalysis:
     if analysis.analysis_type not in {
         SampleAnalysisType.api_astm_1298,
@@ -81,6 +82,7 @@ def _build_analysis(
         else:
             api_60f = api_60f_crude(analysis.temp_obs_f, analysis.lectura_api)
     return SampleAnalysis(
+        sample_id=sample_id,
         analysis_type=analysis.analysis_type,
         product_name=analysis.product_name or "Crudo",
         temp_obs_f=analysis.temp_obs_f,
@@ -103,6 +105,11 @@ def _build_analysis(
     "/",
     response_model=SampleRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def create_sample(
     payload: SampleCreate,
@@ -111,6 +118,18 @@ def create_sample(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> SampleRead:
+    """
+    Crea una muestra con sus análisis asociados.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida (p.ej. identificador vacío).
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: terminal no encontrada.
+
+    Nota: el código de muestra se genera automáticamente con el
+    consecutivo de la terminal.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -153,17 +172,22 @@ def create_sample(
     session.add(sample)
     session.commit()
     session.refresh(sample)
+    sample_id = sample.id
+    if sample_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sample has no ID",
+        )
 
     analysis_rows: list[SampleAnalysis] = []
     for analysis in payload.analyses:
-        row = _build_analysis(analysis)
-        row.sample_id = sample.id
+        row = _build_analysis(analysis, sample_id)
         analysis_rows.append(row)
         session.add(row)
     session.commit()
 
     return SampleRead(
-        id=sample.id,
+        id=sample_id,
         terminal_id=sample.terminal_id,
         code=sample.code,
         sequence=sample.sequence,
@@ -186,25 +210,41 @@ def create_sample(
     "/terminal/{terminal_id}",
     response_model=SampleListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_samples(
     terminal_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> SampleListResponse:
+    """
+    Lista muestras de una terminal, ordenadas por fecha de creación.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: terminal no encontrada.
+    """
     _check_terminal_access(session, current_user, terminal_id)
     samples = session.exec(
         select(Sample)
         .where(Sample.terminal_id == terminal_id)
-        .order_by(Sample.created_at)
+        .order_by(Sample.created_at)  # type: ignore[arg-type]
     ).all()
     if not samples:
         return SampleListResponse(message="No records found")
 
     items: list[SampleRead] = []
     for sample in samples:
+        if sample.id is None:
+            continue
         analyses = session.exec(
             select(SampleAnalysis).where(SampleAnalysis.sample_id == sample.id)
         ).all()
@@ -235,6 +275,10 @@ def list_samples(
     "/{sample_id}",
     response_model=SampleRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_sample(
     sample_id: int,
@@ -244,11 +288,25 @@ def update_sample(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> SampleRead:
+    """
+    Actualiza una muestra y sus análisis por ID.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: muestra no encontrada.
+    """
     sample = session.get(Sample, sample_id)
     if not sample:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sample not found",
+        )
+    sample_db_id = sample.id
+    if sample_db_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sample has no ID",
         )
     _check_terminal_access(session, current_user, sample.terminal_id)
 
@@ -269,7 +327,7 @@ def update_sample(
     analysis_rows: list[SampleAnalysis] = []
     if payload.analyses is not None:
         existing_analyses = session.exec(
-            select(SampleAnalysis).where(SampleAnalysis.sample_id == sample.id)
+            select(SampleAnalysis).where(SampleAnalysis.sample_id == sample_db_id)
         ).all()
         keep_types = {analysis.analysis_type for analysis in payload.analyses}
         to_delete = [
@@ -277,15 +335,19 @@ def update_sample(
             for analysis in existing_analyses
             if str(analysis.analysis_type) not in keep_types
         ]
-        analysis_ids = [analysis.id for analysis in to_delete if analysis.id is not None]
+        analysis_ids = [
+            analysis.id for analysis in to_delete if analysis.id is not None
+        ]
         if analysis_ids:
             session.exec(
                 delete(SampleAnalysisHistory).where(
-                    SampleAnalysisHistory.sample_analysis_id.in_(analysis_ids)
+                    SampleAnalysisHistory.sample_analysis_id.in_(analysis_ids)  # type: ignore[attr-defined]
                 )
             )
         if analysis_ids:
-            session.exec(delete(SampleAnalysis).where(SampleAnalysis.id.in_(analysis_ids)))
+            session.exec(
+                delete(SampleAnalysis).where(SampleAnalysis.id.in_(analysis_ids))  # type: ignore[union-attr]
+            )
         if analysis_ids:
             session.commit()
         for analysis in payload.analyses:
@@ -302,7 +364,7 @@ def update_sample(
                 ).first()
             if row is None:
                 row = SampleAnalysis(
-                    sample_id=sample.id,
+                    sample_id=sample_db_id,
                     analysis_type=analysis.analysis_type,
                     product_name=analysis.product_name or sample.product_name,
                 )
@@ -378,9 +440,18 @@ def update_sample(
                 before_values[key] != after_values[key] for key in before_values
             )
             if has_changes and current_user.id is not None:
+                if row.id is None:
+                    session.add(row)
+                    session.commit()
+                    session.refresh(row)
+                if row.id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Sample analysis has no ID",
+                    )
                 history = SampleAnalysisHistory(
                     sample_analysis_id=row.id,
-                    sample_id=sample.id,
+                    sample_id=sample_db_id,
                     analysis_type=str(row.analysis_type),
                     changed_by_user_id=current_user.id,
                     product_name_before=before_values["product_name"],
@@ -405,11 +476,11 @@ def update_sample(
         analysis_rows
         if analysis_rows
         else session.exec(
-            select(SampleAnalysis).where(SampleAnalysis.sample_id == sample.id)
+            select(SampleAnalysis).where(SampleAnalysis.sample_id == sample_db_id)
         ).all()
     )
     return SampleRead(
-        id=sample.id,
+        id=sample_db_id,
         terminal_id=sample.terminal_id,
         code=sample.code,
         sequence=sample.sequence,
@@ -422,8 +493,7 @@ def update_sample(
         lab_humidity=sample.lab_humidity,
         lab_temperature=sample.lab_temperature,
         analyses=[
-            SampleAnalysisRead.model_validate(r, from_attributes=True)
-            for r in analyses
+            SampleAnalysisRead.model_validate(r, from_attributes=True) for r in analyses
         ],
     )
 
@@ -431,6 +501,10 @@ def update_sample(
 @router.delete(
     "/{sample_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def delete_sample(
     sample_id: int,
@@ -439,16 +513,35 @@ def delete_sample(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> None:
+    """
+    Elimina una muestra por ID.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: muestra no encontrada.
+
+    Nota: si la muestra era la última del consecutivo de la terminal,
+    el contador retrocede automáticamente.
+    """
     sample = session.get(Sample, sample_id)
     if not sample:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Sample not found",
         )
+    sample_db_id = sample.id
+    if sample_db_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sample has no ID",
+        )
     _check_terminal_access(session, current_user, sample.terminal_id)
 
     max_sequence = session.exec(
-        select(func.max(Sample.sequence)).where(Sample.terminal_id == sample.terminal_id)
+        select(func.max(Sample.sequence)).where(
+            Sample.terminal_id == sample.terminal_id
+        )
     ).one()
     if max_sequence is None or sample.sequence != max_sequence:
         raise HTTPException(
@@ -459,7 +552,7 @@ def delete_sample(
     terminal = session.get(CompanyTerminal, sample.terminal_id)
 
     analyses = session.exec(
-        select(SampleAnalysis).where(SampleAnalysis.sample_id == sample.id)
+        select(SampleAnalysis).where(SampleAnalysis.sample_id == sample_db_id)
     ).all()
     for analysis in analyses:
         if any(
@@ -478,11 +571,13 @@ def delete_sample(
     if analysis_ids:
         session.exec(
             delete(SampleAnalysisHistory).where(
-                SampleAnalysisHistory.sample_analysis_id.in_(analysis_ids)
+                SampleAnalysisHistory.sample_analysis_id.in_(analysis_ids)  # type: ignore[attr-defined]
             )
         )
     session.exec(
-        delete(SampleAnalysisHistory).where(SampleAnalysisHistory.sample_id == sample.id)
+        delete(SampleAnalysisHistory).where(
+            SampleAnalysisHistory.sample_id == sample_db_id  # type: ignore[arg-type]
+        )
     )
 
     for analysis in analyses:

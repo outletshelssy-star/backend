@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, delete, select
 
 from app.core.security.authorization import require_role
@@ -15,23 +16,24 @@ from app.models.equipment_type import (
     EquipmentTypeReadWithIncludes,
     EquipmentTypeUpdate,
 )
-from app.models.equipment_type_measure import EquipmentTypeMeasure
+from app.models.equipment_type_history import EquipmentTypeHistory
+from app.models.equipment_type_inspection_item import (
+    EquipmentTypeInspectionItem,
+    EquipmentTypeInspectionItemRead,
+)
 from app.models.equipment_type_max_error import (
     EquipmentTypeMaxError,
     EquipmentTypeMaxErrorCreate,
     EquipmentTypeMaxErrorRead,
 )
-from app.models.equipment_type_inspection_item import (
-    EquipmentTypeInspectionItem,
-    EquipmentTypeInspectionItemRead,
-)
+from app.models.equipment_type_measure import EquipmentTypeMeasure
+from app.models.equipment_type_role_history import EquipmentTypeRoleHistory
 from app.models.equipment_type_verification import (
     EquipmentTypeVerification,
     EquipmentTypeVerificationRead,
 )
 from app.models.equipment_type_verification_item import EquipmentTypeVerificationItem
-from app.models.equipment_type_role_history import EquipmentTypeRoleHistory
-from app.models.equipment_type_history import EquipmentTypeHistory
+from app.models.refs import UserRef
 from app.models.user import User
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
@@ -43,16 +45,47 @@ router = APIRouter(
 )
 
 
+def _require_id(value: int | None, label: str) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{label} has no ID",
+        )
+    return value
+
+
+def _to_user_ref(user: User) -> UserRef:
+    return UserRef(
+        id=_require_id(user.id, "User"),
+        name=user.name,
+        last_name=user.last_name,
+        email=user.email,
+        user_type=user.user_type,
+    )
+
+
 @router.post(
     "/",
     response_model=EquipmentTypeReadWithIncludes,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def create_equipment_type(
     equipment_type_in: EquipmentTypeCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeReadWithIncludes:
+    """
+    Crea un tipo de equipo con medidas y errores máximos.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -91,13 +124,21 @@ def create_equipment_type(
     )
 
     session.add(equipment_type)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Equipment type with this name and role already exists",
+        ) from None
     session.refresh(equipment_type)
+    equipment_type_id = _require_id(equipment_type.id, "EquipmentType")
 
     for measure in equipment_type_in.measures:
         session.add(
             EquipmentTypeMeasure(
-                equipment_type_id=equipment_type.id,
+                equipment_type_id=equipment_type_id,
                 measure=measure,
             )
         )
@@ -227,7 +268,7 @@ def create_equipment_type(
 
         session.add(
             EquipmentTypeMaxError(
-                equipment_type_id=equipment_type.id,
+                equipment_type_id=equipment_type_id,
                 measure=max_error.measure,
                 max_error_value=normalized_value,
             )
@@ -236,7 +277,7 @@ def create_equipment_type(
 
     session.add(
         EquipmentTypeRoleHistory(
-            equipment_type_id=equipment_type.id,
+            equipment_type_id=equipment_type_id,
             role=equipment_type.role,
             changed_by_user_id=current_user.id,
         )
@@ -254,8 +295,7 @@ def create_equipment_type(
         )
     ).all()
     response.max_errors = [
-        EquipmentTypeMaxErrorRead(**m.model_dump())
-        for m in max_errors
+        EquipmentTypeMaxErrorRead(**m.model_dump()) for m in max_errors
     ]
     return response
 
@@ -264,22 +304,36 @@ def create_equipment_type(
     "/",
     response_model=EquipmentTypeListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_types(
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
-    include: str | None = Query(default=None),
+    include: str | None = Query(
+        default=None,
+        description=(
+            "Relaciones a incluir, separadas por coma: "
+            "`creator`, `inspection_items`, `verification_types`."
+        ),
+    ),
 ) -> Any:
+    """
+    Lista tipos de equipo con relaciones opcionales.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `include`: `creator`, `inspection_items`, `verification_types`.
+    """
     equipment_types = session.exec(select(EquipmentType)).all()
     if not equipment_types:
         return EquipmentTypeListResponse(message="No records found")
-    include_set = {
-        item.strip()
-        for item in (include or "").split(",")
-        if item.strip()
-    }
+    include_set = {item.strip() for item in (include or "").split(",") if item.strip()}
     items: list[EquipmentTypeReadWithIncludes] = []
     for equipment_type in equipment_types:
         measures = session.exec(
@@ -298,20 +352,21 @@ def list_equipment_types(
         )
         item.measures = [m.measure for m in measures]
         item.max_errors = [
-            EquipmentTypeMaxErrorRead(**m.model_dump())
-            for m in max_errors
+            EquipmentTypeMaxErrorRead(**m.model_dump()) for m in max_errors
         ]
         if include_set:
             if "creator" in include_set:
-                item.creator = session.get(
-                    User, equipment_type.created_by_user_id
-                )
+                creator_db = session.get(User, equipment_type.created_by_user_id)
+                if creator_db is not None:
+                    item.creator = _to_user_ref(creator_db)
             if "inspection_items" in include_set:
                 inspection_items = session.exec(
-                    select(EquipmentTypeInspectionItem).where(
+                    select(EquipmentTypeInspectionItem)
+                    .where(
                         EquipmentTypeInspectionItem.equipment_type_id
                         == equipment_type.id
-                    ).order_by(EquipmentTypeInspectionItem.order)
+                    )
+                    .order_by(EquipmentTypeInspectionItem.order)  # type: ignore[arg-type]
                 ).all()
                 item.inspection_items = [
                     EquipmentTypeInspectionItemRead(**i.model_dump())
@@ -319,10 +374,11 @@ def list_equipment_types(
                 ]
             if "verification_types" in include_set:
                 verification_types = session.exec(
-                    select(EquipmentTypeVerification).where(
-                        EquipmentTypeVerification.equipment_type_id
-                        == equipment_type.id
-                    ).order_by(EquipmentTypeVerification.order)
+                    select(EquipmentTypeVerification)
+                    .where(
+                        EquipmentTypeVerification.equipment_type_id == equipment_type.id
+                    )
+                    .order_by(EquipmentTypeVerification.order)  # type: ignore[arg-type]
                 ).all()
                 item.verification_types = [
                     EquipmentTypeVerificationRead(**v.model_dump())
@@ -336,15 +392,34 @@ def list_equipment_types(
     "/{equipment_type_id}",
     response_model=EquipmentTypeReadWithIncludes,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def get_equipment_type(
     equipment_type_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
-    include: str | None = Query(default=None),
+    include: str | None = Query(
+        default=None,
+        description=(
+            "Relaciones a incluir, separadas por coma: "
+            "`inspection_items`, `verification_types`, `max_errors`."
+        ),
+    ),
 ) -> EquipmentTypeReadWithIncludes:
+    """
+    Obtiene un tipo de equipo por ID.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `include`: `inspection_items`, `verification_types`, `max_errors`.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -367,25 +442,21 @@ def get_equipment_type(
     )
     response.measures = [m.measure for m in measures]
     response.max_errors = [
-        EquipmentTypeMaxErrorRead(**m.model_dump())
-        for m in max_errors
+        EquipmentTypeMaxErrorRead(**m.model_dump()) for m in max_errors
     ]
-    include_set = {
-        item.strip()
-        for item in (include or "").split(",")
-        if item.strip()
-    }
+    include_set = {item.strip() for item in (include or "").split(",") if item.strip()}
     if include_set:
         if "creator" in include_set:
-            response.creator = session.get(
-                User, equipment_type.created_by_user_id
-            )
+            creator_db = session.get(User, equipment_type.created_by_user_id)
+            if creator_db is not None:
+                response.creator = _to_user_ref(creator_db)
         if "inspection_items" in include_set:
             inspection_items = session.exec(
-                select(EquipmentTypeInspectionItem).where(
-                    EquipmentTypeInspectionItem.equipment_type_id
-                    == equipment_type.id
-                ).order_by(EquipmentTypeInspectionItem.order)
+                select(EquipmentTypeInspectionItem)
+                .where(
+                    EquipmentTypeInspectionItem.equipment_type_id == equipment_type.id
+                )
+                .order_by(EquipmentTypeInspectionItem.order)  # type: ignore[arg-type]
             ).all()
             response.inspection_items = [
                 EquipmentTypeInspectionItemRead(**i.model_dump())
@@ -393,10 +464,9 @@ def get_equipment_type(
             ]
         if "verification_types" in include_set:
             verification_types = session.exec(
-                select(EquipmentTypeVerification).where(
-                    EquipmentTypeVerification.equipment_type_id
-                    == equipment_type.id
-                ).order_by(EquipmentTypeVerification.order)
+                select(EquipmentTypeVerification)
+                .where(EquipmentTypeVerification.equipment_type_id == equipment_type.id)
+                .order_by(EquipmentTypeVerification.order)  # type: ignore[arg-type]
             ).all()
             response.verification_types = [
                 EquipmentTypeVerificationRead(**v.model_dump())
@@ -409,6 +479,11 @@ def get_equipment_type(
     "/{equipment_type_id}",
     response_model=EquipmentTypeReadWithIncludes,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def update_equipment_type(
     equipment_type_id: int,
@@ -416,6 +491,15 @@ def update_equipment_type(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeReadWithIncludes:
+    """
+    Actualiza un tipo de equipo por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -424,7 +508,6 @@ def update_equipment_type(
         )
 
     update_data = equipment_type_in.model_dump(exclude_unset=True)
-
 
     measures = update_data.get("measures")
     max_errors = update_data.get("max_errors")
@@ -443,9 +526,7 @@ def update_equipment_type(
                 detail="Measures list contains duplicates",
             )
         max_errors = [
-            EquipmentTypeMaxErrorCreate.model_validate(m)
-            if isinstance(m, dict)
-            else m
+            EquipmentTypeMaxErrorCreate.model_validate(m) if isinstance(m, dict) else m
             for m in max_errors
         ]
         max_error_measures = [m.measure for m in max_errors]
@@ -465,21 +546,23 @@ def update_equipment_type(
                 EquipmentTypeMeasure.equipment_type_id == equipment_type.id
             )
         ).all()
-        for item in existing_measures:
-            session.delete(item)
+        for measure_item in existing_measures:
+            session.delete(measure_item)
         existing_max_errors = session.exec(
             select(EquipmentTypeMaxError).where(
                 EquipmentTypeMaxError.equipment_type_id == equipment_type.id
             )
         ).all()
-        for item in existing_max_errors:
-            session.delete(item)
+        for max_error_item in existing_max_errors:
+            session.delete(max_error_item)
         session.commit()
 
         for measure in measures:
             session.add(
                 EquipmentTypeMeasure(
-                    equipment_type_id=equipment_type.id,
+                    equipment_type_id=_require_id(
+                        equipment_type.id, "EquipmentType"
+                    ),
                     measure=measure,
                 )
             )
@@ -609,7 +692,9 @@ def update_equipment_type(
 
             session.add(
                 EquipmentTypeMaxError(
-                    equipment_type_id=equipment_type.id,
+                    equipment_type_id=_require_id(
+                        equipment_type.id, "EquipmentType"
+                    ),
                     measure=max_error.measure,
                     max_error_value=normalized_value,
                 )
@@ -620,8 +705,12 @@ def update_equipment_type(
         active_history = session.exec(
             select(EquipmentTypeRoleHistory)
             .where(EquipmentTypeRoleHistory.equipment_type_id == equipment_type.id)
-            .where(EquipmentTypeRoleHistory.ended_at.is_(None))
-            .order_by(EquipmentTypeRoleHistory.started_at.desc())
+            .where(
+                EquipmentTypeRoleHistory.ended_at.is_(None)  # type: ignore[union-attr]
+            )
+            .order_by(
+                EquipmentTypeRoleHistory.started_at.desc()  # type: ignore[attr-defined]
+            )
         ).first()
         if active_history:
             active_history.ended_at = datetime.now(UTC)
@@ -630,9 +719,13 @@ def update_equipment_type(
 
         session.add(
             EquipmentTypeRoleHistory(
-                equipment_type_id=equipment_type.id,
+                equipment_type_id=_require_id(
+                    equipment_type.id, "EquipmentType"
+                ),
                 role=update_data["role"],
-                changed_by_user_id=current_user.id,
+                changed_by_user_id=_require_id(
+                    current_user.id, "User"
+                ),
             )
         )
         session.commit()
@@ -662,8 +755,7 @@ def update_equipment_type(
         )
     ).all()
     response.max_errors = [
-        EquipmentTypeMaxErrorRead(**m.model_dump())
-        for m in max_errors_rows
+        EquipmentTypeMaxErrorRead(**m.model_dump()) for m in max_errors_rows
     ]
     return response
 
@@ -672,12 +764,26 @@ def update_equipment_type(
     "/{equipment_type_id}",
     response_model=EquipmentTypeDeleteResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_409_CONFLICT: {"description": "Conflicto: recurso referenciado"},
+    },
 )
 def delete_equipment_type(
     equipment_type_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeDeleteResponse:
+    """
+    Elimina un tipo de equipo por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    - 409: conflicto por referencias.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -692,37 +798,37 @@ def delete_equipment_type(
 
     session.exec(
         delete(EquipmentTypeVerificationItem).where(
-            EquipmentTypeVerificationItem.equipment_type_id == equipment_type.id
+            EquipmentTypeVerificationItem.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeVerification).where(
-            EquipmentTypeVerification.equipment_type_id == equipment_type.id
+            EquipmentTypeVerification.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeInspectionItem).where(
-            EquipmentTypeInspectionItem.equipment_type_id == equipment_type.id
+            EquipmentTypeInspectionItem.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeMeasure).where(
-            EquipmentTypeMeasure.equipment_type_id == equipment_type.id
+            EquipmentTypeMeasure.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeMaxError).where(
-            EquipmentTypeMaxError.equipment_type_id == equipment_type.id
+            EquipmentTypeMaxError.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeRoleHistory).where(
-            EquipmentTypeRoleHistory.equipment_type_id == equipment_type.id
+            EquipmentTypeRoleHistory.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeHistory).where(
-            EquipmentTypeHistory.equipment_type_id == equipment_type.id
+            EquipmentTypeHistory.equipment_type_id == equipment_type.id  # type: ignore[arg-type]
         )
     )
 

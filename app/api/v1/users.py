@@ -38,6 +38,15 @@ router = APIRouter(
 )
 
 
+def _require_id(value: int | None, label: str) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{label} has no ID",
+        )
+    return value
+
+
 def _to_user_read_with_company(
     user: User,
     session: Session,
@@ -47,13 +56,17 @@ def _to_user_read_with_company(
         company = session.get(Company, user.company_id)
         if company:
             company_ref = CompanyRef(
-                **company.model_dump(include={"id", "name", "company_type", "is_active"})
+                **company.model_dump(
+                    include={"id", "name", "company_type", "is_active"}
+                )
             )
     terminal_refs: list[CompanyTerminalRef] = []
     terminal_ids: list[int] = []
     if _user_type_value(user.user_type) == UserType.superadmin.value:
         all_terminals = session.exec(select(CompanyTerminal)).all()
         for terminal in all_terminals:
+            if terminal.id is None:
+                continue
             terminal_ids.append(terminal.id)
             terminal_refs.append(
                 CompanyTerminalRef(
@@ -65,12 +78,12 @@ def _to_user_read_with_company(
             select(UserTerminal).where(UserTerminal.user_id == user.id)
         ).all()
         for link in terminal_links:
-            terminal = session.get(CompanyTerminal, link.terminal_id)
-            if terminal:
-                terminal_ids.append(terminal.id)
+            linked_terminal = session.get(CompanyTerminal, link.terminal_id)
+            if linked_terminal and linked_terminal.id is not None:
+                terminal_ids.append(linked_terminal.id)
                 terminal_refs.append(
                     CompanyTerminalRef(
-                        **terminal.model_dump(include={"id", "name", "is_active"})
+                        **linked_terminal.model_dump(include={"id", "name", "is_active"})
                     )
                 )
     return UserReadWithCompany(
@@ -87,9 +100,13 @@ def _load_terminals(
 ) -> list[CompanyTerminal]:
     if not terminal_ids:
         return []
-    terminals = session.exec(
-        select(CompanyTerminal).where(CompanyTerminal.id.in_(terminal_ids))
-    ).all()
+    terminals = list(
+        session.exec(
+            select(CompanyTerminal).where(
+                CompanyTerminal.id.in_(terminal_ids)  # type: ignore[union-attr]
+            )
+        ).all()
+    )
     if len(terminals) != len(set(terminal_ids)):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -127,12 +144,26 @@ def _user_type_value(user_type: UserType | str) -> str:
     "/",
     response_model=UserReadWithCompany,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_404_NOT_FOUND: {"description": "Empresa no encontrada"},
+        status.HTTP_409_CONFLICT: {"description": "El email ya está registrado"},
+    },
 )
 def create_user(
     user: UserCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> UserReadWithCompany:
+    """
+    Crea un usuario y lo asocia a una empresa y terminales.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: empresa no encontrada.
+    - 409: email ya registrado.
+    """
     company = session.get(Company, user.company_id)
     if not company:
         raise HTTPException(
@@ -163,11 +194,11 @@ def create_user(
 
     session.refresh(db_user)
     if _user_type_value(user.user_type) != UserType.superadmin.value:
+        user_id = _require_id(db_user.id, "User")
         terminals = _load_terminals(session, user.terminal_ids)
         for terminal in terminals:
-            session.add(
-                UserTerminal(user_id=db_user.id, terminal_id=terminal.id)
-            )
+            terminal_id = _require_id(terminal.id, "Terminal")
+            session.add(UserTerminal(user_id=user_id, terminal_id=terminal_id))
         session.commit()
     return _to_user_read_with_company(db_user, session)
 
@@ -176,24 +207,37 @@ def create_user(
     "/",
     response_model=UserListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_users(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
-    include: str | None = Query(default=None),
-    is_active: bool | None = Query(default=None),
+    include: str | None = Query(
+        default=None,
+        description="Relaciones a incluir, separadas por coma: `company`, `terminals`.",
+    ),
+    is_active: bool | None = Query(
+        default=None,
+        description="Filtrar por estado activo/inactivo.",
+    ),
 ) -> Any:
+    """
+    Lista usuarios con filtros y relaciones opcionales.
+
+    Permisos: `admin` o `superadmin`.
+    Parámetros:
+    - `include`: relaciones `company`, `terminals`.
+    - `is_active`: filtra por estado.
+    """
     statement = select(User)
     if is_active is not None:
         statement = statement.where(User.is_active == is_active)
     users = session.exec(statement).all()
     if not users:
         return UserListResponse(message="No records found")
-    include_set = {
-        item.strip()
-        for item in (include or "").split(",")
-        if item.strip()
-    }
+    include_set = {item.strip() for item in (include or "").split(",") if item.strip()}
     items = []
     for u in users:
         if include_set:
@@ -209,9 +253,16 @@ def list_users(
 )
 def read_me(
     current_user: User = Depends(get_current_active_user),
-    include: str | None = Query(default=None),
+    include: str | None = Query(default=None, description="Incluir relaciones: `company`, `terminals`."),
     session: Session = Depends(get_session),
 ):
+    """
+    Retorna el usuario autenticado.
+
+    Permisos: autenticado.
+    Parámetros:
+    - `include`: relaciones `company`, `terminals`.
+    """
     if include:
         return _to_user_read_with_company(current_user, session)
     return UserReadWithCompany(**current_user.model_dump())
@@ -227,6 +278,11 @@ def update_me(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
 ) -> UserReadWithCompany:
+    """
+    Actualiza el perfil del usuario autenticado.
+
+    Permisos: autenticado.
+    """
     update_data = user_in.model_dump(exclude_unset=True)
 
     for field, value in update_data.items():
@@ -242,12 +298,22 @@ def update_me(
 @router.put(
     "/me/password",
     status_code=status.HTTP_204_NO_CONTENT,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Contraseña actual incorrecta o nueva igual a la actual"},
+    },
 )
 def update_my_password(
     data: UserPasswordUpdate,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
 ) -> None:
+    """
+    Cambia la contraseña del usuario autenticado.
+
+    Permisos: autenticado.
+    Respuestas:
+    - 400: contraseña actual incorrecta o nueva igual a la actual.
+    """
     if not verify_password(data.current_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -268,13 +334,24 @@ def update_my_password(
 @router.get(
     "/{user_id}",
     response_model=UserReadWithCompany,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def get_user(
     user_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
-    include: str | None = Query(default=None),
+    include: str | None = Query(default=None, description="Incluir relaciones: `company`, `terminals`."),
 ):
+    """
+    Obtiene un usuario por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Parámetros:
+    - `include`: relaciones `company`, `terminals`.
+    """
     user = session.get(User, user_id)
 
     if not user:
@@ -292,6 +369,11 @@ def get_user(
 @router.put(
     "/{user_id}",
     response_model=UserReadWithCompany,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def update_user(
     user_id: int,
@@ -299,6 +381,15 @@ def update_user(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> UserReadWithCompany:
+    """
+    Actualiza un usuario por ID (admin).
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     user = session.get(User, user_id)
 
     if not user:
@@ -334,6 +425,7 @@ def update_user(
     session.refresh(user)
 
     if terminal_ids is not None:
+        user_id = _require_id(user.id, "User")
         existing_links = session.exec(
             select(UserTerminal).where(UserTerminal.user_id == user.id)
         ).all()
@@ -342,9 +434,8 @@ def update_user(
         if _user_type_value(user.user_type) != UserType.superadmin.value:
             terminals = _load_terminals(session, terminal_ids)
             for terminal in terminals:
-                session.add(
-                    UserTerminal(user_id=user.id, terminal_id=terminal.id)
-                )
+                terminal_id = _require_id(terminal.id, "Terminal")
+                session.add(UserTerminal(user_id=user_id, terminal_id=terminal_id))
         session.commit()
 
     return _to_user_read_with_company(user, session)
@@ -360,6 +451,11 @@ def upload_my_photo(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_active_user),
 ) -> UserReadWithCompany:
+    """
+    Sube la foto del usuario autenticado.
+
+    Permisos: autenticado.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -380,6 +476,10 @@ def upload_my_photo(
     "/{user_id}/photo",
     response_model=UserReadWithCompany,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def upload_photo(
     user_id: int,
@@ -387,6 +487,14 @@ def upload_photo(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> UserReadWithCompany:
+    """
+    Sube la foto de un usuario por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     user = session.get(User, user_id)
 
     if not user:
@@ -409,12 +517,26 @@ def upload_photo(
     "/{user_id}",
     response_model=UserDeleteResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def delete_user(
     user_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> UserDeleteResponse:
+    """
+    Elimina un usuario o lo desactiva si tiene actividad relacionada.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     user = session.get(User, user_id)
 
     if not user:

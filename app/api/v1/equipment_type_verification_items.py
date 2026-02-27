@@ -5,7 +5,11 @@ from sqlmodel import Session, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
+from app.models.enums import UserType
 from app.models.equipment_type import EquipmentType
+from app.models.equipment_type_verification import (
+    EquipmentTypeVerification,
+)
 from app.models.equipment_type_verification_item import (
     EquipmentTypeVerificationItem,
     EquipmentTypeVerificationItemBulkCreate,
@@ -14,10 +18,6 @@ from app.models.equipment_type_verification_item import (
     EquipmentTypeVerificationItemRead,
     EquipmentTypeVerificationItemUpdate,
 )
-from app.models.equipment_type_verification import (
-    EquipmentTypeVerification,
-)
-from app.models.enums import UserType
 from app.models.user import User
 
 router = APIRouter(
@@ -32,9 +32,7 @@ def _resolve_verification_type_id(
     verification_type_id: int | None,
 ) -> int:
     if verification_type_id is not None:
-        verification_type = session.get(
-            EquipmentTypeVerification, verification_type_id
-        )
+        verification_type = session.get(EquipmentTypeVerification, verification_type_id)
         if (
             not verification_type
             or verification_type.equipment_type_id != equipment_type_id
@@ -63,6 +61,10 @@ def _resolve_verification_type_id(
     "/equipment-type/{equipment_type_id}",
     response_model=EquipmentTypeVerificationItemRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_verification_item(
     equipment_type_id: int,
@@ -70,6 +72,14 @@ def create_verification_item(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeVerificationItemRead:
+    """
+    Crea un ítem de verificación para un tipo de equipo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 404: recurso no encontrado.
+    - 403: permisos insuficientes.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -94,6 +104,10 @@ def create_verification_item(
     "/equipment-type/{equipment_type_id}/bulk",
     response_model=EquipmentTypeVerificationItemListResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_verification_items_bulk(
     equipment_type_id: int,
@@ -101,6 +115,14 @@ def create_verification_items_bulk(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeVerificationItemListResponse:
+    """
+    Crea múltiples ítems de verificación para un tipo de equipo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 404: recurso no encontrado.
+    - 403: permisos insuficientes.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -129,15 +151,28 @@ def create_verification_items_bulk(
     "/equipment-type/{equipment_type_id}",
     response_model=EquipmentTypeVerificationItemListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_verification_items(
     equipment_type_id: int,
     verification_type_id: int | None = None,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista los ítems de verificación de un tipo de equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `verification_type_id`: filtra por tipo de verificación.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -148,12 +183,9 @@ def list_verification_items(
         EquipmentTypeVerificationItem.equipment_type_id == equipment_type_id
     )
     if verification_type_id is not None:
-        _resolve_verification_type_id(
-            session, equipment_type_id, verification_type_id
-        )
+        _resolve_verification_type_id(session, equipment_type_id, verification_type_id)
         query = query.where(
-            EquipmentTypeVerificationItem.verification_type_id
-            == verification_type_id
+            EquipmentTypeVerificationItem.verification_type_id == verification_type_id
         )
     items = session.exec(query).all()
     if not items:
@@ -167,6 +199,10 @@ def list_verification_items(
     "/equipment-type/{equipment_type_id}/{item_id}",
     response_model=EquipmentTypeVerificationItemRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_verification_item(
     equipment_type_id: int,
@@ -175,6 +211,14 @@ def update_verification_item(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeVerificationItemRead:
+    """
+    Actualiza un ítem de verificación por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 404: recurso no encontrado.
+    - 403: permisos insuficientes.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -204,6 +248,11 @@ def update_verification_item(
     "/equipment-type/{equipment_type_id}/{item_id}",
     response_model=EquipmentTypeVerificationItemRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_409_CONFLICT: {"description": "Conflicto: recurso referenciado"},
+    },
 )
 def delete_verification_item(
     equipment_type_id: int,
@@ -211,6 +260,15 @@ def delete_verification_item(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeVerificationItemRead:
+    """
+    Elimina un ítem de verificación por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 404: recurso no encontrado.
+    - 403: permisos insuficientes.
+    - 409: conflicto por referencias.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(

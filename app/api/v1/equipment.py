@@ -1,10 +1,10 @@
-﻿from typing import Any
-
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, delete, select
 
+from app.api.v1.equipment_verifications import _parse_monthly_readings_from_notes
 from app.core.security.authorization import require_role
 from app.db.session import get_session
 from app.models.company import Company
@@ -21,10 +21,15 @@ from app.models.equipment import (
     EquipmentReadWithIncludes,
     EquipmentUpdate,
 )
-from app.models.equipment_measure_spec import (
-    EquipmentMeasureSpec,
-    EquipmentMeasureSpecCreate,
-    EquipmentMeasureSpecRead,
+from app.models.equipment_calibration import (
+    EquipmentCalibration,
+    EquipmentCalibrationRead,
+    EquipmentCalibrationResult,
+    EquipmentCalibrationResultRead,
+)
+from app.models.equipment_history import (
+    EquipmentHistoryEntry,
+    EquipmentHistoryListResponse,
 )
 from app.models.equipment_inspection import (
     EquipmentInspection,
@@ -32,42 +37,36 @@ from app.models.equipment_inspection import (
     EquipmentInspectionResponse,
     EquipmentInspectionResponseRead,
 )
+from app.models.equipment_measure_spec import (
+    EquipmentMeasureSpec,
+    EquipmentMeasureSpecCreate,
+    EquipmentMeasureSpecRead,
+)
+from app.models.equipment_reading import EquipmentReading
+from app.models.equipment_terminal_history import (
+    EquipmentTerminalHistory,
+    EquipmentTerminalHistoryListResponse,
+    EquipmentTerminalHistoryRead,
+)
+from app.models.equipment_type import EquipmentType
+from app.models.equipment_type_history import (
+    EquipmentTypeHistory,
+    EquipmentTypeHistoryListResponse,
+    EquipmentTypeHistoryRead,
+)
 from app.models.equipment_verification import (
     EquipmentVerification,
     EquipmentVerificationRead,
     EquipmentVerificationResponse,
     EquipmentVerificationResponseRead,
 )
-from app.models.equipment_calibration import (
-    EquipmentCalibration,
-    EquipmentCalibrationRead,
-    EquipmentCalibrationResult,
-    EquipmentCalibrationResultRead,
-)
-from app.api.v1.equipment_verifications import _parse_monthly_readings_from_notes
-from app.models.equipment_reading import EquipmentReading
-from app.models.equipment_type import EquipmentType
+from app.models.refs import CompanyRef, CompanyTerminalRef, EquipmentTypeRef, UserRef
 from app.models.user import User
-from app.models.equipment_type_history import (
-    EquipmentTypeHistory,
-    EquipmentTypeHistoryListResponse,
-    EquipmentTypeHistoryRead,
-)
-from app.models.equipment_terminal_history import (
-    EquipmentTerminalHistory,
-    EquipmentTerminalHistoryListResponse,
-    EquipmentTerminalHistoryRead,
-)
-from app.models.equipment_history import (
-    EquipmentHistoryEntry,
-    EquipmentHistoryListResponse,
-)
 from app.models.user_terminal import UserTerminal
-from app.models.user import User
+from app.utils.emp_weights import get_emp
 from app.utils.measurements.length import Length
 from app.utils.measurements.temperature import Temperature
 from app.utils.measurements.weight import Weight
-from app.utils.emp_weights import get_emp
 
 router = APIRouter(
     prefix="/equipment",
@@ -182,6 +181,37 @@ def _normalize_relative_humidity(value: float, unit: str) -> float:
     )
 
 
+def _to_equipment_type_ref(model: EquipmentType) -> EquipmentTypeRef:
+    return EquipmentTypeRef(
+        **model.model_dump(
+            include={
+                "id",
+                "name",
+                "role",
+                "inspection_days",
+                "calibration_days",
+                "is_lab",
+            }
+        )
+    )
+
+
+def _to_company_ref(model: Company) -> CompanyRef:
+    return CompanyRef(
+        **model.model_dump(include={"id", "name", "company_type", "is_active"})
+    )
+
+
+def _to_terminal_ref(model: CompanyTerminal) -> CompanyTerminalRef:
+    return CompanyTerminalRef(**model.model_dump(include={"id", "name", "is_active"}))
+
+
+def _to_user_ref(model: User) -> UserRef:
+    return UserRef(
+        **model.model_dump(include={"id", "name", "last_name", "email", "user_type"})
+    )
+
+
 def _format_nominal_mass(value: float) -> str:
     numeric = float(value)
     if numeric.is_integer():
@@ -209,6 +239,7 @@ def _validate_weight_serial(serial: str, nominal_mass_value: float, unit: str) -
             detail=f"Serial must end with {expected}",
         )
 
+
 def _replace_component_serials(
     session: Session,
     equipment_id: int,
@@ -216,7 +247,7 @@ def _replace_component_serials(
 ) -> None:
     session.exec(
         delete(EquipmentComponentSerial).where(
-            EquipmentComponentSerial.equipment_id == equipment_id
+            EquipmentComponentSerial.equipment_id == equipment_id  # type: ignore[arg-type]
         )
     )
     for component in component_serials:
@@ -238,20 +269,35 @@ def _get_component_serials(
             EquipmentComponentSerial.equipment_id == equipment_id
         )
     ).all()
-    return [
-        EquipmentComponentSerialRead(**row.model_dump())
-        for row in rows
-    ]
+    return [EquipmentComponentSerialRead(**row.model_dump()) for row in rows]
+
+
 @router.post(
     "/",
     response_model=EquipmentReadWithIncludes,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_equipment(
     equipment_in: EquipmentCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentReadWithIncludes:
+    """
+    Crea un equipo con especificaciones de medida y componentes.
+
+    Permisos: `admin`, `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    - 404: tipo de equipo, empresa o terminal no encontrada.
+
+    Nota: valida el EMP y el serial para pesas. Registra el historial
+    inicial de tipo y terminal del equipo.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -322,17 +368,23 @@ def create_equipment(
     session.add(equipment)
     session.commit()
     session.refresh(equipment)
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID after creation",
+        )
+    equipment_id = equipment.id
 
     session.add(
         EquipmentTypeHistory(
-            equipment_id=equipment.id,
+            equipment_id=equipment_id,
             equipment_type_id=equipment.equipment_type_id,
             changed_by_user_id=current_user.id,
         )
     )
     session.add(
         EquipmentTerminalHistory(
-            equipment_id=equipment.id,
+            equipment_id=equipment_id,
             terminal_id=equipment.terminal_id,
             changed_by_user_id=current_user.id,
         )
@@ -341,7 +393,7 @@ def create_equipment(
 
     _replace_component_serials(
         session,
-        equipment.id,
+        equipment_id,
         equipment_in.component_serials,
     )
 
@@ -428,7 +480,7 @@ def create_equipment(
             )
         session.add(
             EquipmentMeasureSpec(
-                equipment_id=equipment.id,
+                equipment_id=equipment_id,
                 measure=spec.measure,
                 min_value=min_value,
                 max_value=max_value,
@@ -443,14 +495,13 @@ def create_equipment(
     )
     measure_specs = session.exec(
         select(EquipmentMeasureSpec).where(
-            EquipmentMeasureSpec.equipment_id == equipment.id
+            EquipmentMeasureSpec.equipment_id == equipment_id
         )
     ).all()
     response.measure_specs = [
-        EquipmentMeasureSpecRead(**s.model_dump())
-        for s in measure_specs
+        EquipmentMeasureSpecRead(**s.model_dump()) for s in measure_specs
     ]
-    response.component_serials = _get_component_serials(session, equipment.id)
+    response.component_serials = _get_component_serials(session, equipment_id)
     return response
 
 
@@ -458,31 +509,54 @@ def create_equipment(
     "/",
     response_model=EquipmentListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment(
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
-    include: str | None = Query(default=None),
+    include: str | None = Query(
+        default=None,
+        description=(
+            "Relaciones a incluir, separadas por coma: `equipment_type`, "
+            "`owner_company`, `terminal`."
+        ),
+    ),
 ) -> Any:
+    """
+    Lista equipos visibles para el usuario actual.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `include`: relaciones opcionales (`equipment_type`, `owner_company`,
+      `terminal`, `creator`, `inspections`, `verifications`, `calibrations`).
+
+    Nota: usuarios que no son `superadmin` solo ven equipos de las
+    terminales que tienen asignadas.
+    """
     statement = select(Equipment)
     allowed_terminal_ids = _get_allowed_terminal_ids(session, current_user)
     if allowed_terminal_ids:
-        statement = statement.where(Equipment.terminal_id.in_(allowed_terminal_ids))
+        statement = statement.where(
+            Equipment.terminal_id.in_(allowed_terminal_ids)  # type: ignore[attr-defined]
+        )
     equipment_items = session.exec(statement).all()
     if not equipment_items:
         return EquipmentListResponse(message="No records found")
-    include_set = {
-        item.strip()
-        for item in (include or "").split(",")
-        if item.strip()
-    }
+    include_set = {item.strip() for item in (include or "").split(",") if item.strip()}
     items: list[EquipmentReadWithIncludes] = []
     for equipment in equipment_items:
+        if equipment.id is None:
+            continue
+        equipment_id = equipment.id
         measure_specs = session.exec(
             select(EquipmentMeasureSpec).where(
-                EquipmentMeasureSpec.equipment_id == equipment.id
+                EquipmentMeasureSpec.equipment_id == equipment_id
             )
         ).all()
         item = EquipmentReadWithIncludes.model_validate(
@@ -490,39 +564,39 @@ def list_equipment(
             from_attributes=True,
         )
         item.measure_specs = [
-            EquipmentMeasureSpecRead(**s.model_dump())
-            for s in measure_specs
+            EquipmentMeasureSpecRead(**s.model_dump()) for s in measure_specs
         ]
-        item.component_serials = _get_component_serials(session, equipment.id)
+        item.component_serials = _get_component_serials(session, equipment_id)
         if include_set:
             if "equipment_type" in include_set:
-                item.equipment_type = session.get(
+                equipment_type = session.get(
                     EquipmentType, equipment.equipment_type_id
                 )
+                if equipment_type:
+                    item.equipment_type = _to_equipment_type_ref(equipment_type)
             if "owner_company" in include_set:
-                item.owner_company = session.get(
-                    Company, equipment.owner_company_id
-                )
+                owner_company = session.get(Company, equipment.owner_company_id)
+                if owner_company:
+                    item.owner_company = _to_company_ref(owner_company)
             if "terminal" in include_set:
-                item.terminal = session.get(
-                    CompanyTerminal, equipment.terminal_id
-                )
+                terminal = session.get(CompanyTerminal, equipment.terminal_id)
+                if terminal:
+                    item.terminal = _to_terminal_ref(terminal)
             if "creator" in include_set:
-                item.creator = session.get(
-                    User, equipment.created_by_user_id
-                )
+                creator = session.get(User, equipment.created_by_user_id)
+                if creator:
+                    item.creator = _to_user_ref(creator)
             if "inspections" in include_set:
                 inspections = session.exec(
                     select(EquipmentInspection).where(
-                        EquipmentInspection.equipment_id == equipment.id
+                        EquipmentInspection.equipment_id == equipment_id
                     )
                 ).all()
                 inspection_items: list[EquipmentInspectionRead] = []
                 for inspection in inspections:
-                    responses = session.exec(
+                    inspection_responses = session.exec(
                         select(EquipmentInspectionResponse).where(
-                            EquipmentInspectionResponse.inspection_id
-                            == inspection.id
+                            EquipmentInspectionResponse.inspection_id == inspection.id
                         )
                     ).all()
                     inspection_items.append(
@@ -530,7 +604,7 @@ def list_equipment(
                             **inspection.model_dump(),
                             responses=[
                                 EquipmentInspectionResponseRead(**r.model_dump())
-                                for r in responses
+                                for r in inspection_responses
                             ],
                         )
                     )
@@ -538,12 +612,12 @@ def list_equipment(
             if "verifications" in include_set:
                 verifications = session.exec(
                     select(EquipmentVerification).where(
-                        EquipmentVerification.equipment_id == equipment.id
+                        EquipmentVerification.equipment_id == equipment_id
                     )
                 ).all()
                 verification_items: list[EquipmentVerificationRead] = []
                 for verification in verifications:
-                    responses = session.exec(
+                    verification_responses = session.exec(
                         select(EquipmentVerificationResponse).where(
                             EquipmentVerificationResponse.verification_id
                             == verification.id
@@ -554,7 +628,7 @@ def list_equipment(
                             **verification.model_dump(),
                             responses=[
                                 EquipmentVerificationResponseRead(**r.model_dump())
-                                for r in responses
+                                for r in verification_responses
                             ],
                         )
                     )
@@ -566,15 +640,14 @@ def list_equipment(
             if "calibrations" in include_set:
                 calibrations = session.exec(
                     select(EquipmentCalibration).where(
-                        EquipmentCalibration.equipment_id == equipment.id
+                        EquipmentCalibration.equipment_id == equipment_id
                     )
                 ).all()
                 calibration_items: list[EquipmentCalibrationRead] = []
                 for calibration in calibrations:
                     results = session.exec(
                         select(EquipmentCalibrationResult).where(
-                            EquipmentCalibrationResult.calibration_id
-                            == calibration.id
+                            EquipmentCalibrationResult.calibration_id == calibration.id
                         )
                     ).all()
                     calibration_items.append(
@@ -595,15 +668,38 @@ def list_equipment(
     "/{equipment_id}",
     response_model=EquipmentReadWithIncludes,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def get_equipment(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
-    include: str | None = Query(default=None),
+    include: str | None = Query(
+        default=None,
+        description=(
+            "Relaciones a incluir, separadas por coma: `equipment_type`, "
+            "`owner_company`, `terminal`."
+        ),
+    ),
 ) -> EquipmentReadWithIncludes:
+    """
+    Obtiene un equipo por ID con relaciones opcionales.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `include`: relaciones opcionales (`equipment_type`, `owner_company`,
+      `terminal`, `creator`, `inspections`, `verifications`, `calibrations`).
+    Respuestas:
+    - 403: sin acceso a la terminal del equipo.
+    - 404: equipo no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -616,54 +712,72 @@ def get_equipment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this terminal",
         )
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID",
+        )
+    equip_id = equipment.id
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID",
+        )
+    equip_id = equipment.id
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID",
+        )
+    equip_id = equipment.id
     response = EquipmentReadWithIncludes.model_validate(
         equipment,
         from_attributes=True,
     )
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID",
+        )
+    equip_id = equipment.id
     measure_specs = session.exec(
         select(EquipmentMeasureSpec).where(
-            EquipmentMeasureSpec.equipment_id == equipment.id
+            EquipmentMeasureSpec.equipment_id == equip_id
         )
     ).all()
     response.measure_specs = [
-        EquipmentMeasureSpecRead(**s.model_dump())
-        for s in measure_specs
+        EquipmentMeasureSpecRead(**s.model_dump()) for s in measure_specs
     ]
-    response.component_serials = _get_component_serials(session, equipment.id)
-    include_set = {
-        item.strip()
-        for item in (include or "").split(",")
-        if item.strip()
-    }
+    response.component_serials = _get_component_serials(session, equip_id)
+    include_set = {item.strip() for item in (include or "").split(",") if item.strip()}
     if include_set:
         if "equipment_type" in include_set:
-            response.equipment_type = session.get(
-                EquipmentType, equipment.equipment_type_id
-            )
+            equipment_type = session.get(EquipmentType, equipment.equipment_type_id)
+            if equipment_type:
+                response.equipment_type = _to_equipment_type_ref(equipment_type)
         if "owner_company" in include_set:
-            response.owner_company = session.get(
-                Company, equipment.owner_company_id
-            )
+            owner_company = session.get(Company, equipment.owner_company_id)
+            if owner_company:
+                response.owner_company = _to_company_ref(owner_company)
         if "terminal" in include_set:
-            response.terminal = session.get(
-                CompanyTerminal, equipment.terminal_id
-            )
+            terminal = session.get(CompanyTerminal, equipment.terminal_id)
+            if terminal:
+                response.terminal = _to_terminal_ref(terminal)
         if "creator" in include_set:
-            response.creator = session.get(
-                User, equipment.created_by_user_id
-            )
+            creator = session.get(User, equipment.created_by_user_id)
+            if creator:
+                response.creator = _to_user_ref(creator)
         if "inspections" in include_set:
             inspections = session.exec(
                 select(EquipmentInspection).where(
-                    EquipmentInspection.equipment_id == equipment.id
+                    EquipmentInspection.equipment_id == equip_id
                 )
             ).all()
             inspection_items: list[EquipmentInspectionRead] = []
             for inspection in inspections:
-                responses = session.exec(
+                inspection_responses = session.exec(
                     select(EquipmentInspectionResponse).where(
-                        EquipmentInspectionResponse.inspection_id
-                        == inspection.id
+                        EquipmentInspectionResponse.inspection_id == inspection.id
                     )
                 ).all()
                 inspection_items.append(
@@ -671,7 +785,7 @@ def get_equipment(
                         **inspection.model_dump(),
                         responses=[
                             EquipmentInspectionResponseRead(**r.model_dump())
-                            for r in responses
+                            for r in inspection_responses
                         ],
                     )
                 )
@@ -679,15 +793,14 @@ def get_equipment(
         if "verifications" in include_set:
             verifications = session.exec(
                 select(EquipmentVerification).where(
-                    EquipmentVerification.equipment_id == equipment.id
+                    EquipmentVerification.equipment_id == equip_id
                 )
             ).all()
             verification_items: list[EquipmentVerificationRead] = []
             for verification in verifications:
-                responses = session.exec(
+                verification_responses = session.exec(
                     select(EquipmentVerificationResponse).where(
-                        EquipmentVerificationResponse.verification_id
-                        == verification.id
+                        EquipmentVerificationResponse.verification_id == verification.id
                     )
                 ).all()
                 verification_items.append(
@@ -695,7 +808,7 @@ def get_equipment(
                         **verification.model_dump(),
                         responses=[
                             EquipmentVerificationResponseRead(**r.model_dump())
-                            for r in responses
+                            for r in verification_responses
                         ],
                     )
                 )
@@ -707,15 +820,14 @@ def get_equipment(
         if "calibrations" in include_set:
             calibrations = session.exec(
                 select(EquipmentCalibration).where(
-                    EquipmentCalibration.equipment_id == equipment.id
+                    EquipmentCalibration.equipment_id == equip_id
                 )
             ).all()
             calibration_items: list[EquipmentCalibrationRead] = []
             for calibration in calibrations:
                 results = session.exec(
                     select(EquipmentCalibrationResult).where(
-                        EquipmentCalibrationResult.calibration_id
-                        == calibration.id
+                        EquipmentCalibrationResult.calibration_id == calibration.id
                     )
                 ).all()
                 calibration_items.append(
@@ -735,6 +847,10 @@ def get_equipment(
     "/{equipment_id}",
     response_model=EquipmentReadWithIncludes,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_equipment(
     equipment_id: int,
@@ -744,6 +860,18 @@ def update_equipment(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentReadWithIncludes:
+    """
+    Actualiza un equipo y sus relaciones dependientes.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: equipo, tipo de equipo o terminal no encontrada.
+
+    Nota: puede actualizar especificaciones de medida y seriales de
+    componentes. Registra cambios de tipo o terminal en el historial.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -762,6 +890,12 @@ def update_equipment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this terminal",
         )
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID",
+        )
+    equip_id = equipment.id
 
     update_data = payload.model_dump(exclude_unset=True)
     specs = update_data.pop("measure_specs", None)
@@ -810,19 +944,19 @@ def update_equipment(
                     detail="Equipment type not found",
                 )
             if equipment_type_id != equipment.equipment_type_id:
-                current_history = session.exec(
+                current_type_history = session.exec(
                     select(EquipmentTypeHistory).where(
-                        EquipmentTypeHistory.equipment_id == equipment.id,
-                        EquipmentTypeHistory.ended_at.is_(None),
+                        EquipmentTypeHistory.equipment_id == equip_id,
+                        EquipmentTypeHistory.ended_at.is_(None),  # type: ignore[union-attr]
                     )
                 ).first()
-                if current_history:
-                    current_history.ended_at = datetime.now(UTC)
-                    session.add(current_history)
+                if current_type_history:
+                    current_type_history.ended_at = datetime.now(UTC)
+                    session.add(current_type_history)
 
                 session.add(
                     EquipmentTypeHistory(
-                        equipment_id=equipment.id,
+                        equipment_id=equip_id,
                         equipment_type_id=equipment_type_id,
                         changed_by_user_id=current_user.id,
                     )
@@ -830,9 +964,7 @@ def update_equipment(
 
     if "owner_company_id" in update_data:
         owner_company_id = update_data["owner_company_id"]
-        if owner_company_id is not None and not session.get(
-            Company, owner_company_id
-        ):
+        if owner_company_id is not None and not session.get(Company, owner_company_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Owner company not found",
@@ -840,9 +972,7 @@ def update_equipment(
 
     if "terminal_id" in update_data:
         terminal_id = update_data["terminal_id"]
-        if terminal_id is not None and not session.get(
-            CompanyTerminal, terminal_id
-        ):
+        if terminal_id is not None and not session.get(CompanyTerminal, terminal_id):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Terminal not found",
@@ -853,18 +983,18 @@ def update_equipment(
                 detail="You do not have access to this terminal",
             )
         if terminal_id is not None and terminal_id != equipment.terminal_id:
-            current_history = session.exec(
+            current_terminal_history = session.exec(
                 select(EquipmentTerminalHistory).where(
-                    EquipmentTerminalHistory.equipment_id == equipment.id,
-                    EquipmentTerminalHistory.ended_at.is_(None),
+                    EquipmentTerminalHistory.equipment_id == equip_id,
+                    EquipmentTerminalHistory.ended_at.is_(None),  # type: ignore[union-attr]
                 )
             ).first()
-            if current_history:
-                current_history.ended_at = datetime.now(UTC)
-                session.add(current_history)
+            if current_terminal_history:
+                current_terminal_history.ended_at = datetime.now(UTC)
+                session.add(current_terminal_history)
             session.add(
                 EquipmentTerminalHistory(
-                    equipment_id=equipment.id,
+                    equipment_id=equip_id,
                     terminal_id=terminal_id,
                     changed_by_user_id=current_user.id,
                 )
@@ -880,7 +1010,7 @@ def update_equipment(
     if component_serials is not None:
         _replace_component_serials(
             session,
-            equipment.id,
+            equip_id,
             [
                 (
                     EquipmentComponentSerialCreate.model_validate(item)
@@ -894,7 +1024,7 @@ def update_equipment(
     if specs is not None:
         session.exec(
             delete(EquipmentMeasureSpec).where(
-                EquipmentMeasureSpec.equipment_id == equipment.id
+                EquipmentMeasureSpec.equipment_id == equip_id  # type: ignore[arg-type]
             )
         )
         for spec_data in specs:
@@ -985,7 +1115,7 @@ def update_equipment(
                 )
             session.add(
                 EquipmentMeasureSpec(
-                    equipment_id=equipment.id,
+                    equipment_id=equip_id,
                     measure=spec.measure,
                     min_value=min_value,
                     max_value=max_value,
@@ -1002,14 +1132,13 @@ def update_equipment(
     )
     measure_specs = session.exec(
         select(EquipmentMeasureSpec).where(
-            EquipmentMeasureSpec.equipment_id == equipment.id
+            EquipmentMeasureSpec.equipment_id == equip_id
         )
     ).all()
     response.measure_specs = [
-        EquipmentMeasureSpecRead(**s.model_dump())
-        for s in measure_specs
+        EquipmentMeasureSpecRead(**s.model_dump()) for s in measure_specs
     ]
-    response.component_serials = _get_component_serials(session, equipment.id)
+    response.component_serials = _get_component_serials(session, equip_id)
     return response
 
 
@@ -1017,6 +1146,10 @@ def update_equipment(
     "/{equipment_id}",
     response_model=EquipmentDeleteResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def delete_equipment(
     equipment_id: int,
@@ -1025,6 +1158,17 @@ def delete_equipment(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentDeleteResponse:
+    """
+    Elimina un equipo o lo desactiva si tiene operaciones asociadas.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: equipo no encontrado.
+
+    Nota: si el equipo tiene inspecciones, verificaciones, calibraciones
+    o lecturas registradas, se desactiva en lugar de eliminarse.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -1038,20 +1182,24 @@ def delete_equipment(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this terminal",
         )
+    if equipment.id is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Equipment has no ID",
+        )
+    equip_id = equipment.id
 
     has_inspection = session.exec(
         select(EquipmentInspection.id).where(
-            EquipmentInspection.equipment_id == equipment.id
+            EquipmentInspection.equipment_id == equip_id
         )
     ).first()
     has_reading = session.exec(
-        select(EquipmentReading.id).where(
-            EquipmentReading.equipment_id == equipment.id
-        )
+        select(EquipmentReading.id).where(EquipmentReading.equipment_id == equip_id)
     ).first()
     has_calibration = session.exec(
         select(EquipmentCalibration.id).where(
-            EquipmentCalibration.equipment_id == equipment.id
+            EquipmentCalibration.equipment_id == equip_id
         )
     ).first()
 
@@ -1060,17 +1208,19 @@ def delete_equipment(
         session.add(equipment)
         session.commit()
         session.refresh(equipment)
-        response = EquipmentReadWithIncludes.model_validate(equipment, from_attributes=True)
-        response.equipment_type = session.get(
-            EquipmentType, equipment.equipment_type_id
+        response = EquipmentReadWithIncludes.model_validate(
+            equipment, from_attributes=True
         )
-        response.owner_company = session.get(
-            Company, equipment.owner_company_id
-        )
-        response.terminal = session.get(
-            CompanyTerminal, equipment.terminal_id
-        )
-        response.component_serials = _get_component_serials(session, equipment.id)
+        equipment_type = session.get(EquipmentType, equipment.equipment_type_id)
+        if equipment_type:
+            response.equipment_type = _to_equipment_type_ref(equipment_type)
+        owner_company = session.get(Company, equipment.owner_company_id)
+        if owner_company:
+            response.owner_company = _to_company_ref(owner_company)
+        terminal = session.get(CompanyTerminal, equipment.terminal_id)
+        if terminal:
+            response.terminal = _to_terminal_ref(terminal)
+        response.component_serials = _get_component_serials(session, equip_id)
         return EquipmentDeleteResponse(
             action="deactivated",
             message="Equipment has operations. It was marked inactive instead of deleted.",
@@ -1080,35 +1230,35 @@ def delete_equipment(
     equipment_data = EquipmentReadWithIncludes.model_validate(
         equipment, from_attributes=True
     )
-    equipment_data.equipment_type = session.get(
-        EquipmentType, equipment.equipment_type_id
-    )
-    equipment_data.owner_company = session.get(
-        Company, equipment.owner_company_id
-    )
-    equipment_data.terminal = session.get(
-        CompanyTerminal, equipment.terminal_id
-    )
-    equipment_data.component_serials = _get_component_serials(session, equipment.id)
+    equipment_type = session.get(EquipmentType, equipment.equipment_type_id)
+    if equipment_type:
+        equipment_data.equipment_type = _to_equipment_type_ref(equipment_type)
+    owner_company = session.get(Company, equipment.owner_company_id)
+    if owner_company:
+        equipment_data.owner_company = _to_company_ref(owner_company)
+    terminal = session.get(CompanyTerminal, equipment.terminal_id)
+    if terminal:
+        equipment_data.terminal = _to_terminal_ref(terminal)
+    equipment_data.component_serials = _get_component_serials(session, equip_id)
 
     session.exec(
         delete(EquipmentComponentSerial).where(
-            EquipmentComponentSerial.equipment_id == equipment.id
+            EquipmentComponentSerial.equipment_id == equip_id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentMeasureSpec).where(
-            EquipmentMeasureSpec.equipment_id == equipment.id
+            EquipmentMeasureSpec.equipment_id == equip_id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTypeHistory).where(
-            EquipmentTypeHistory.equipment_id == equipment.id
+            EquipmentTypeHistory.equipment_id == equip_id  # type: ignore[arg-type]
         )
     )
     session.exec(
         delete(EquipmentTerminalHistory).where(
-            EquipmentTerminalHistory.equipment_id == equipment.id
+            EquipmentTerminalHistory.equipment_id == equip_id  # type: ignore[arg-type]
         )
     )
     session.delete(equipment)
@@ -1124,14 +1274,28 @@ def delete_equipment(
     "/{equipment_id}/type-history",
     response_model=EquipmentTypeHistoryListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_type_history(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista el historial de cambios de tipo del equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: sin acceso a la terminal del equipo.
+    - 404: equipo no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -1153,10 +1317,7 @@ def list_equipment_type_history(
     if not history:
         return EquipmentTypeHistoryListResponse(message="No records found")
 
-    items = [
-        EquipmentTypeHistoryRead(**h.model_dump())
-        for h in history
-    ]
+    items = [EquipmentTypeHistoryRead(**h.model_dump()) for h in history]
     return EquipmentTypeHistoryListResponse(items=items)
 
 
@@ -1164,14 +1325,28 @@ def list_equipment_type_history(
     "/{equipment_id}/terminal-history",
     response_model=EquipmentTerminalHistoryListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_terminal_history(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista el historial de cambios de terminal del equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: sin acceso a la terminal del equipo.
+    - 404: equipo no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -1193,10 +1368,7 @@ def list_equipment_terminal_history(
     if not history:
         return EquipmentTerminalHistoryListResponse(message="No records found")
 
-    items = [
-        EquipmentTerminalHistoryRead(**h.model_dump())
-        for h in history
-    ]
+    items = [EquipmentTerminalHistoryRead(**h.model_dump()) for h in history]
     return EquipmentTerminalHistoryListResponse(items=items)
 
 
@@ -1204,14 +1376,28 @@ def list_equipment_terminal_history(
     "/{equipment_id}/history",
     response_model=EquipmentHistoryListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_history(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista el historial combinado de cambios de tipo y terminal.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: sin acceso a la terminal del equipo.
+    - 404: equipo no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -1238,46 +1424,52 @@ def list_equipment_history(
 
     items: list[EquipmentHistoryEntry] = []
     user_ids: set[int] = set()
-    for h in type_history:
-        if h.changed_by_user_id:
-            user_ids.add(h.changed_by_user_id)
-    for h in terminal_history:
-        if h.changed_by_user_id:
-            user_ids.add(h.changed_by_user_id)
+    for type_entry in type_history:
+        if type_entry.changed_by_user_id:
+            user_ids.add(type_entry.changed_by_user_id)
+    for terminal_entry in terminal_history:
+        if terminal_entry.changed_by_user_id:
+            user_ids.add(terminal_entry.changed_by_user_id)
     user_name_by_id: dict[int, str] = {}
     if user_ids:
-        users = session.exec(select(User).where(User.id.in_(user_ids))).all()
+        users = session.exec(
+            select(User).where(User.id.in_(user_ids))  # type: ignore[union-attr]
+        ).all()
         for user in users:
+            if user.id is None:
+                continue
             label = (
                 " ".join(filter(None, [user.name, user.last_name])).strip()
                 or user.email
                 or str(user.id)
             )
             user_name_by_id[user.id] = label
-    for h in type_history:
+    for type_entry in type_history:
         items.append(
             EquipmentHistoryEntry(
-                id=f"type-{h.id}",
+                id=f"type-{type_entry.id}",
                 kind="type",
-                equipment_type_id=h.equipment_type_id,
+                equipment_type_id=type_entry.equipment_type_id,
                 terminal_id=None,
-                started_at=h.started_at,
-                ended_at=h.ended_at,
-                changed_by_user_id=h.changed_by_user_id,
-                changed_by_user_name=user_name_by_id.get(h.changed_by_user_id),
+                started_at=type_entry.started_at,
+                ended_at=type_entry.ended_at,
+                changed_by_user_id=type_entry.changed_by_user_id,
+                changed_by_user_name=user_name_by_id.get(type_entry.changed_by_user_id),
             )
         )
-    for h in terminal_history:
+    for terminal_entry in terminal_history:
         items.append(
             EquipmentHistoryEntry(
-                id=f"terminal-{h.id}",
+                id=f"terminal-{terminal_entry.id}",
                 kind="terminal",
                 equipment_type_id=None,
-                terminal_id=h.terminal_id,
-                started_at=h.started_at,
-                ended_at=h.ended_at,
-                changed_by_user_id=h.changed_by_user_id,
-                changed_by_user_name=user_name_by_id.get(h.changed_by_user_id),
+                terminal_id=terminal_entry.terminal_id,
+                started_at=terminal_entry.started_at,
+                ended_at=terminal_entry.ended_at,
+                changed_by_user_id=terminal_entry.changed_by_user_id,
+                changed_by_user_name=user_name_by_id.get(
+                    terminal_entry.changed_by_user_id
+                ),
             )
         )
 
@@ -1286,11 +1478,3 @@ def list_equipment_history(
 
     items.sort(key=lambda entry: entry.started_at)
     return EquipmentHistoryListResponse(items=items)
-
-
-
-
-
-
-
-

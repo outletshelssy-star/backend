@@ -5,6 +5,8 @@ from sqlmodel import Session, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
+from app.models.enums import UserType
+from app.models.equipment_inspection import EquipmentInspectionResponse
 from app.models.equipment_type import EquipmentType
 from app.models.equipment_type_inspection_item import (
     EquipmentTypeInspectionItem,
@@ -14,8 +16,6 @@ from app.models.equipment_type_inspection_item import (
     EquipmentTypeInspectionItemRead,
     EquipmentTypeInspectionItemUpdate,
 )
-from app.models.equipment_inspection import EquipmentInspectionResponse
-from app.models.enums import UserType
 from app.models.user import User
 
 router = APIRouter(
@@ -28,6 +28,10 @@ router = APIRouter(
     "/equipment-type/{equipment_type_id}",
     response_model=EquipmentTypeInspectionItemRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_inspection_item(
     equipment_type_id: int,
@@ -35,6 +39,14 @@ def create_inspection_item(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeInspectionItemRead:
+    """
+    Crea un ítem de inspección para un tipo de equipo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: tipo de equipo no encontrado.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -63,6 +75,10 @@ def create_inspection_item(
     "/equipment-type/{equipment_type_id}/bulk",
     response_model=EquipmentTypeInspectionItemListResponse,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_inspection_items_bulk(
     equipment_type_id: int,
@@ -70,6 +86,14 @@ def create_inspection_items_bulk(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeInspectionItemListResponse:
+    """
+    Crea múltiples ítems de inspección para un tipo de equipo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: tipo de equipo no encontrado.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -109,14 +133,28 @@ def create_inspection_items_bulk(
     "/equipment-type/{equipment_type_id}",
     response_model=EquipmentTypeInspectionItemListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_inspection_items(
     equipment_type_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista los ítems de inspección de un tipo de equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: tipo de equipo no encontrado.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -125,9 +163,9 @@ def list_inspection_items(
         )
 
     items = session.exec(
-        select(EquipmentTypeInspectionItem).where(
-            EquipmentTypeInspectionItem.equipment_type_id == equipment_type_id
-        ).order_by(EquipmentTypeInspectionItem.order)
+        select(EquipmentTypeInspectionItem)
+        .where(EquipmentTypeInspectionItem.equipment_type_id == equipment_type_id)
+        .order_by(EquipmentTypeInspectionItem.order)  # type: ignore[arg-type]
     ).all()
     if not items:
         return EquipmentTypeInspectionItemListResponse(message="No records found")
@@ -140,6 +178,10 @@ def list_inspection_items(
     "/equipment-type/{equipment_type_id}/{item_id}",
     response_model=EquipmentTypeInspectionItemRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_inspection_item(
     equipment_type_id: int,
@@ -148,6 +190,14 @@ def update_inspection_item(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeInspectionItemRead:
+    """
+    Actualiza un ítem de inspección por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: tipo de equipo o ítem no encontrado.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(
@@ -175,6 +225,11 @@ def update_inspection_item(
     "/equipment-type/{equipment_type_id}/{item_id}",
     response_model=EquipmentTypeInspectionItemRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_409_CONFLICT: {"description": "Conflicto: recurso referenciado"},
+    },
 )
 def delete_inspection_item(
     equipment_type_id: int,
@@ -182,6 +237,15 @@ def delete_inspection_item(
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentTypeInspectionItemRead:
+    """
+    Elimina un ítem de inspección por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: tipo de equipo o ítem no encontrado.
+    - 409: el ítem tiene respuestas registradas y no puede eliminarse.
+    """
     equipment_type = session.get(EquipmentType, equipment_type_id)
     if not equipment_type:
         raise HTTPException(

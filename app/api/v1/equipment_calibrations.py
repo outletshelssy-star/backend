@@ -9,7 +9,6 @@ from app.db.session import get_session
 from app.models.company import Company
 from app.models.enums import EquipmentMeasureType, UserType
 from app.models.equipment import Equipment
-from app.models.equipment_type import EquipmentType
 from app.models.equipment_calibration import (
     EquipmentCalibration,
     EquipmentCalibrationCreate,
@@ -20,20 +19,29 @@ from app.models.equipment_calibration import (
     EquipmentCalibrationResultRead,
     EquipmentCalibrationUpdate,
 )
+from app.models.equipment_type import EquipmentType
 from app.models.equipment_type_max_error import EquipmentTypeMaxError
 from app.models.equipment_type_measure import EquipmentTypeMeasure
 from app.models.user import User
 from app.models.user_terminal import UserTerminal
 from app.services.supabase_storage import upload_calibration_certificate
-from app.utils.measurements.length import Length
-from app.utils.measurements.temperature import Temperature
-from app.utils.measurements.weight import Weight
 from app.utils.emp_weights import get_emp
+from app.utils.measurements.length import Length
+from app.utils.measurements.weight import Weight
 
 router = APIRouter(
     prefix="/equipment-calibrations",
     tags=["Equipment Calibrations"],
 )
+
+
+def _require_id(value: int | None, label: str) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{label} has no ID",
+        )
+    return value
 
 
 def _as_utc(dt_value: datetime) -> datetime:
@@ -84,15 +92,55 @@ def _infer_measure_from_unit(unit: str | None) -> EquipmentMeasureType | None:
     unit_key = unit.strip().lower()
     if unit_key in {"c", "f", "k", "r", "celsius", "fahrenheit", "kelvin", "rankine"}:
         return EquipmentMeasureType.temperature
-    if unit_key in {"mm", "cm", "m", "in", "ft", "millimeter", "millimeters", "centimeter", "centimeters", "meter", "meters", "inch", "inches", "foot", "feet"}:
+    if unit_key in {
+        "mm",
+        "cm",
+        "m",
+        "in",
+        "ft",
+        "millimeter",
+        "millimeters",
+        "centimeter",
+        "centimeters",
+        "meter",
+        "meters",
+        "inch",
+        "inches",
+        "foot",
+        "feet",
+    }:
         return EquipmentMeasureType.length
-    if unit_key in {"g", "kg", "lb", "lbs", "oz", "mg", "gram", "grams", "kilogram", "kilograms", "pound", "pounds", "ounce", "ounces", "milligram", "milligrams"}:
+    if unit_key in {
+        "g",
+        "kg",
+        "lb",
+        "lbs",
+        "oz",
+        "mg",
+        "gram",
+        "grams",
+        "kilogram",
+        "kilograms",
+        "pound",
+        "pounds",
+        "ounce",
+        "ounces",
+        "milligram",
+        "milligrams",
+    }:
         return EquipmentMeasureType.weight
     if unit_key in {"api"}:
         return EquipmentMeasureType.api
     if unit_key in {"%p/v", "%pv", "p/v", "%w/v"}:
         return EquipmentMeasureType.percent_pv
-    if unit_key in {"%", "%rh", "rh", "percent", "relativehumidity", "relative-humidity"}:
+    if unit_key in {
+        "%",
+        "%rh",
+        "rh",
+        "percent",
+        "relativehumidity",
+        "relative-humidity",
+    }:
         return EquipmentMeasureType.relative_humidity
     return None
 
@@ -166,7 +214,14 @@ def _normalize_uncertainty_value(
         )
     if measure == EquipmentMeasureType.relative_humidity:
         unit_key = (unit or "%").strip().lower().replace(" ", "")
-        if unit_key in {"%", "%rh", "rh", "percent", "relativehumidity", "relative-humidity"}:
+        if unit_key in {
+            "%",
+            "%rh",
+            "rh",
+            "percent",
+            "relativehumidity",
+            "relative-humidity",
+        }:
             return value
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -226,12 +281,12 @@ def _validate_uncertainty_max_error(
         if uncertainty_value is None:
             continue
         if is_weight_equipment:
-            measure = EquipmentMeasureType.weight
+            measure: EquipmentMeasureType | None = EquipmentMeasureType.weight
             max_error = emp_value
         else:
-            measure: EquipmentMeasureType | None = None
+            measure = None
             if len(measures) == 1:
-                measure = measures[0]
+                measure = EquipmentMeasureType(measures[0])
             else:
                 measure = _infer_measure_from_unit(row.unit)
             if measure is None and emp_value is not None:
@@ -248,14 +303,19 @@ def _validate_uncertainty_max_error(
         if max_error is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se encontro error maximo para el tipo de equipo.",
+                detail="No se encontró error máximo para el tipo de equipo.",
+            )
+        if measure is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pudo determinar la medida para validar la incertidumbre.",
             )
         normalized = _normalize_uncertainty_value(uncertainty_value, measure, row.unit)
         if normalized > max_error:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "La incertidumbre supera el error maximo permitido "
+                    "La incertidumbre supera el error máximo permitido "
                     f"({max_error:.6g})."
                 ),
             )
@@ -286,7 +346,7 @@ def _replace_results(
 ) -> None:
     session.exec(
         delete(EquipmentCalibrationResult).where(
-            EquipmentCalibrationResult.calibration_id == calibration_id
+            EquipmentCalibrationResult.calibration_id == calibration_id  # type: ignore[arg-type]
         )
     )
     for row in rows:
@@ -316,15 +376,29 @@ def _replace_results(
     "/equipment/{equipment_id}",
     response_model=EquipmentCalibrationRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_equipment_calibration(
     equipment_id: int,
     payload: EquipmentCalibrationCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> EquipmentCalibrationRead:
+    """
+    Crea una calibración para un equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: equipo o empresa de calibración no encontrada.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -349,10 +423,13 @@ def create_equipment_calibration(
             detail="certificate_number is required",
         )
     _validate_uncertainty_max_error(session, equipment, payload.results)
-    calibrated_at = _as_utc(payload.calibrated_at) if payload.calibrated_at else datetime.now(UTC)
+    calibrated_at = (
+        _as_utc(payload.calibrated_at) if payload.calibrated_at else datetime.now(UTC)
+    )
 
+    equipment_db_id = _require_id(equipment.id, "Equipment")
     calibration = EquipmentCalibration(
-        equipment_id=equipment.id,
+        equipment_id=equipment_db_id,
         calibrated_at=calibrated_at,
         created_by_user_id=current_user.id,
         calibration_company_id=calibration_company_id,
@@ -362,8 +439,9 @@ def create_equipment_calibration(
     session.add(calibration)
     session.commit()
     session.refresh(calibration)
+    calibration_id = _require_id(calibration.id, "Calibration")
 
-    _replace_results(session, calibration.id, payload.results)
+    _replace_results(session, calibration_id, payload.results)
     session.commit()
     session.refresh(calibration)
     return _read_with_results(session, calibration)
@@ -373,14 +451,28 @@ def create_equipment_calibration(
     "/equipment/{equipment_id}",
     response_model=EquipmentCalibrationListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_calibrations(
     equipment_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista calibraciones de un equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -406,6 +498,10 @@ def list_equipment_calibrations(
     "/{calibration_id}",
     response_model=EquipmentCalibrationRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def get_equipment_calibration(
     calibration_id: int,
@@ -414,6 +510,14 @@ def get_equipment_calibration(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentCalibrationRead:
+    """
+    Obtiene una calibracion por ID.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     calibration = session.get(EquipmentCalibration, calibration_id)
     if not calibration:
         raise HTTPException(
@@ -434,6 +538,10 @@ def get_equipment_calibration(
     "/{calibration_id}",
     response_model=EquipmentCalibrationRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_equipment_calibration(
     calibration_id: int,
@@ -443,6 +551,14 @@ def update_equipment_calibration(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentCalibrationRead:
+    """
+    Actualiza una calibracion por ID.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     calibration = session.get(EquipmentCalibration, calibration_id)
     if not calibration:
         raise HTTPException(
@@ -482,7 +598,8 @@ def update_equipment_calibration(
     session.add(calibration)
     if payload.results is not None:
         _validate_uncertainty_max_error(session, equipment, payload.results)
-        _replace_results(session, calibration.id, payload.results)
+        calibration_id = _require_id(calibration.id, "Calibration")
+        _replace_results(session, calibration_id, payload.results)
     session.commit()
     session.refresh(calibration)
     return _read_with_results(session, calibration)
@@ -492,6 +609,10 @@ def update_equipment_calibration(
     "/{calibration_id}/certificate",
     response_model=EquipmentCalibrationRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def upload_equipment_calibration_certificate(
     calibration_id: int,
@@ -501,6 +622,14 @@ def upload_equipment_calibration_certificate(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentCalibrationRead:
+    """
+    Sube el certificado PDF de una calibracion.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     calibration = session.get(EquipmentCalibration, calibration_id)
     if not calibration:
         raise HTTPException(

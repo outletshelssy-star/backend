@@ -1,12 +1,14 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlmodel import Session, delete, select
+from sqlalchemy import desc
+from sqlmodel import Session, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
-from app.models.company_terminal import CompanyTerminal
 from app.models.company import Company
+from app.models.company_terminal import CompanyTerminal
+from app.models.enums import UserType
 from app.models.external_analysis_record import (
     ExternalAnalysisRecord,
     ExternalAnalysisRecordCreate,
@@ -14,7 +16,6 @@ from app.models.external_analysis_record import (
     ExternalAnalysisRecordRead,
     ExternalAnalysisRecordUpdate,
 )
-from app.services.supabase_storage import upload_external_analysis_report
 from app.models.external_analysis_terminal import (
     ExternalAnalysisTerminal,
     ExternalAnalysisTerminalCreate,
@@ -30,12 +31,21 @@ from app.models.external_analysis_type import (
 )
 from app.models.user import User
 from app.models.user_terminal import UserTerminal
-from app.models.enums import UserType
+from app.services.supabase_storage import upload_external_analysis_report
 
 router = APIRouter(
     prefix="/external-analyses",
     tags=["External Analyses"],
 )
+
+
+def _require_id(value: int | None, label: str) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{label} has no ID",
+        )
+    return value
 
 
 def _as_utc(dt_value: datetime) -> datetime:
@@ -64,6 +74,7 @@ def _check_terminal_access(session: Session, user: User, terminal_id: int) -> No
 def list_external_analysis_types(
     session: Session = Depends(get_session),
 ) -> ExternalAnalysisTypeListResponse:
+    """Lista los tipos de análisis externo."""
     rows = session.exec(select(ExternalAnalysisType)).all()
     if not rows:
         return ExternalAnalysisTypeListResponse(message="No records found")
@@ -76,18 +87,20 @@ def list_external_analysis_types(
     "/types",
     response_model=ExternalAnalysisTypeRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_external_analysis_type(
     payload: ExternalAnalysisTypeCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> ExternalAnalysisTypeRead:
+    """Crea un tipo de análisis externo."""
     if current_user.id is None:
         raise HTTPException(status_code=500, detail="User has no ID")
     existing = session.exec(
-        select(ExternalAnalysisType).where(
-            ExternalAnalysisType.name == payload.name
-        )
+        select(ExternalAnalysisType).where(ExternalAnalysisType.name == payload.name)
     ).first()
     if existing:
         raise HTTPException(
@@ -109,6 +122,10 @@ def create_external_analysis_type(
 @router.patch(
     "/types/{analysis_type_id}",
     response_model=ExternalAnalysisTypeRead,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_external_analysis_type(
     analysis_type_id: int,
@@ -116,6 +133,7 @@ def update_external_analysis_type(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> ExternalAnalysisTypeRead:
+    """Actualiza un tipo de análisis externo por ID."""
     row = session.get(ExternalAnalysisType, analysis_type_id)
     if not row:
         raise HTTPException(status_code=404, detail="External analysis type not found")
@@ -131,12 +149,17 @@ def update_external_analysis_type(
 @router.delete(
     "/types/{analysis_type_id}",
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def delete_external_analysis_type(
     analysis_type_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> dict:
+    """Elimina un tipo de análisis externo si no está en uso."""
     row = session.get(ExternalAnalysisType, analysis_type_id)
     if not row:
         raise HTTPException(status_code=404, detail="External analysis type not found")
@@ -158,14 +181,21 @@ def delete_external_analysis_type(
 @router.get(
     "/terminal/{terminal_id}",
     response_model=ExternalAnalysisTerminalListResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_terminal_external_analyses(
     terminal_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> ExternalAnalysisTerminalListResponse:
+    """Lista configuraciones de análisis externos por terminal."""
     terminal = session.get(CompanyTerminal, terminal_id)
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -177,10 +207,16 @@ def list_terminal_external_analyses(
             ExternalAnalysisTerminal.terminal_id == terminal_id
         )
     ).all()
-    config_by_type = {row.analysis_type_id: row for row in configs}
+    config_by_type = {
+        row.analysis_type_id: row
+        for row in configs
+        if row.analysis_type_id is not None
+    }
 
     items: list[ExternalAnalysisTerminalRead] = []
     for analysis_type in types:
+        if analysis_type.id is None:
+            continue
         cfg = config_by_type.get(analysis_type.id)
         frequency_days = (
             cfg.frequency_days
@@ -196,7 +232,7 @@ def list_terminal_external_analyses(
                 ExternalAnalysisRecord.terminal_id == terminal_id,
                 ExternalAnalysisRecord.analysis_type_id == analysis_type.id,
             )
-            .order_by(ExternalAnalysisRecord.performed_at.desc())
+            .order_by(desc(ExternalAnalysisRecord.performed_at))  # type: ignore[arg-type]
         ).first()
         last_performed_at = last_record.performed_at if last_record else None
         next_due_at = (
@@ -223,6 +259,10 @@ def list_terminal_external_analyses(
 @router.post(
     "/terminal/{terminal_id}",
     response_model=ExternalAnalysisTerminalRead,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def upsert_terminal_external_analysis(
     terminal_id: int,
@@ -230,6 +270,7 @@ def upsert_terminal_external_analysis(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> ExternalAnalysisTerminalRead:
+    """Crea o actualiza la configuración de análisis externo por terminal."""
     if current_user.id is None:
         raise HTTPException(status_code=500, detail="User has no ID")
     terminal = session.get(CompanyTerminal, terminal_id)
@@ -238,11 +279,12 @@ def upsert_terminal_external_analysis(
     analysis_type = session.get(ExternalAnalysisType, payload.analysis_type_id)
     if not analysis_type:
         raise HTTPException(status_code=404, detail="External analysis type not found")
+    analysis_type_id = _require_id(analysis_type.id, "ExternalAnalysisType")
 
     row = session.exec(
         select(ExternalAnalysisTerminal).where(
             ExternalAnalysisTerminal.terminal_id == terminal_id,
-            ExternalAnalysisTerminal.analysis_type_id == payload.analysis_type_id,
+            ExternalAnalysisTerminal.analysis_type_id == analysis_type_id,
         )
     ).first()
     if row:
@@ -251,7 +293,7 @@ def upsert_terminal_external_analysis(
     else:
         row = ExternalAnalysisTerminal(
             terminal_id=terminal_id,
-            analysis_type_id=payload.analysis_type_id,
+            analysis_type_id=analysis_type_id,
             frequency_days=analysis_type.default_frequency_days,
             is_active=payload.is_active,
             created_by_user_id=current_user.id,
@@ -264,9 +306,9 @@ def upsert_terminal_external_analysis(
         select(ExternalAnalysisRecord)
         .where(
             ExternalAnalysisRecord.terminal_id == terminal_id,
-            ExternalAnalysisRecord.analysis_type_id == payload.analysis_type_id,
+            ExternalAnalysisRecord.analysis_type_id == analysis_type_id,
         )
-        .order_by(ExternalAnalysisRecord.performed_at.desc())
+        .order_by(desc(ExternalAnalysisRecord.performed_at))  # type: ignore[arg-type]
     ).first()
     last_performed_at = last_record.performed_at if last_record else None
     next_due_at = (
@@ -276,7 +318,7 @@ def upsert_terminal_external_analysis(
     )
     return ExternalAnalysisTerminalRead(
         terminal_id=terminal_id,
-        analysis_type_id=payload.analysis_type_id,
+        analysis_type_id=analysis_type_id,
         analysis_type_name=analysis_type.name,
         frequency_days=row.frequency_days,
         is_active=row.is_active,
@@ -288,15 +330,33 @@ def upsert_terminal_external_analysis(
 @router.get(
     "/records/terminal/{terminal_id}",
     response_model=ExternalAnalysisRecordListResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_external_analysis_records(
     terminal_id: int,
-    analysis_type_id: int | None = Query(default=None),
+    analysis_type_id: int | None = Query(
+        default=None, description="Filtrar por tipo de análisis."
+    ),
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> ExternalAnalysisRecordListResponse:
+    """
+    Lista los registros de análisis externo de un terminal.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `analysis_type_id`: filtra por tipo de análisis.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: terminal no encontrada.
+    """
     terminal = session.get(CompanyTerminal, terminal_id)
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -307,21 +367,27 @@ def list_external_analysis_records(
     )
     if analysis_type_id is not None:
         stmt = stmt.where(ExternalAnalysisRecord.analysis_type_id == analysis_type_id)
-    rows = session.exec(stmt.order_by(ExternalAnalysisRecord.performed_at.desc())).all()
+    rows = session.exec(
+        stmt.order_by(desc(ExternalAnalysisRecord.performed_at))  # type: ignore[arg-type]
+    ).all()
     if not rows:
         return ExternalAnalysisRecordListResponse(message="No records found")
-    type_ids = {row.analysis_type_id for row in rows}
+    type_ids = {
+        row.analysis_type_id for row in rows if row.analysis_type_id is not None
+    }
     company_ids = {
-        row.analysis_company_id
-        for row in rows
-        if row.analysis_company_id is not None
+        row.analysis_company_id for row in rows if row.analysis_company_id is not None
     }
     types = session.exec(
-        select(ExternalAnalysisType).where(ExternalAnalysisType.id.in_(type_ids))
+        select(ExternalAnalysisType).where(
+            ExternalAnalysisType.id.in_(type_ids)  # type: ignore[union-attr]
+        )
     ).all()
     type_by_id = {t.id: t for t in types}
     companies = (
-        session.exec(select(Company).where(Company.id.in_(company_ids))).all()
+        session.exec(
+            select(Company).where(Company.id.in_(company_ids))  # type: ignore[union-attr]
+        ).all()
         if company_ids
         else []
     )
@@ -329,17 +395,20 @@ def list_external_analysis_records(
     return ExternalAnalysisRecordListResponse(
         items=[
             ExternalAnalysisRecordRead(
-                id=row.id,
+                id=_require_id(row.id, "ExternalAnalysisRecord"),
                 terminal_id=row.terminal_id,
                 analysis_type_id=row.analysis_type_id,
-                analysis_type_name=type_by_id.get(row.analysis_type_id).name
-                if type_by_id.get(row.analysis_type_id)
-                else "",
+                analysis_type_name=(
+                    type_by_id[row.analysis_type_id].name
+                    if row.analysis_type_id in type_by_id
+                    else ""
+                ),
                 analysis_company_id=row.analysis_company_id,
-                analysis_company_name=company_by_id.get(row.analysis_company_id).name
-                if row.analysis_company_id
-                and company_by_id.get(row.analysis_company_id)
-                else None,
+                analysis_company_name=(
+                    company_by_id[row.analysis_company_id].name
+                    if row.analysis_company_id in company_by_id
+                    else None
+                ),
                 performed_at=row.performed_at,
                 report_number=row.report_number,
                 report_pdf_url=row.report_pdf_url,
@@ -359,15 +428,29 @@ def list_external_analysis_records(
     "/records/terminal/{terminal_id}",
     response_model=ExternalAnalysisRecordRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def create_external_analysis_record(
     terminal_id: int,
     payload: ExternalAnalysisRecordCreate,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> ExternalAnalysisRecordRead:
+    """
+    Crea un registro de análisis externo para un terminal.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: terminal o tipo de análisis no encontrado.
+    """
     if current_user.id is None:
         raise HTTPException(status_code=500, detail="User has no ID")
     terminal = session.get(CompanyTerminal, terminal_id)
@@ -385,7 +468,9 @@ def create_external_analysis_record(
         if not analysis_company:
             raise HTTPException(status_code=404, detail="Company not found")
 
-    performed_at = _as_utc(payload.performed_at) if payload.performed_at else datetime.now(UTC)
+    performed_at = (
+        _as_utc(payload.performed_at) if payload.performed_at else datetime.now(UTC)
+    )
     record = ExternalAnalysisRecord(
         terminal_id=terminal_id,
         analysis_type_id=payload.analysis_type_id,
@@ -402,8 +487,9 @@ def create_external_analysis_record(
     session.add(record)
     session.commit()
     session.refresh(record)
+    record_id = _require_id(record.id, "ExternalAnalysisRecord")
     return ExternalAnalysisRecordRead(
-        id=record.id,
+        id=record_id,
         terminal_id=record.terminal_id,
         analysis_type_id=record.analysis_type_id,
         analysis_type_name=analysis_type.name,
@@ -424,18 +510,34 @@ def create_external_analysis_record(
 @router.post(
     "/records/{record_id}/report",
     response_model=ExternalAnalysisRecordRead,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def upload_external_analysis_report_file(
     record_id: int,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> ExternalAnalysisRecordRead:
+    """
+    Sube el PDF del reporte para un registro de análisis externo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: registro no encontrado.
+    """
     record = session.get(ExternalAnalysisRecord, record_id)
     if not record:
-        raise HTTPException(status_code=404, detail="External analysis record not found")
+        raise HTTPException(
+            status_code=404, detail="External analysis record not found"
+        )
     _check_terminal_access(session, current_user, record.terminal_id)
 
     report_url = upload_external_analysis_report(file, record_id)
@@ -443,6 +545,7 @@ def upload_external_analysis_report_file(
     session.add(record)
     session.commit()
     session.refresh(record)
+    record_id = _require_id(record.id, "ExternalAnalysisRecord")
 
     analysis_type = session.get(ExternalAnalysisType, record.analysis_type_id)
     analysis_type_name = analysis_type.name if analysis_type else ""
@@ -451,7 +554,7 @@ def upload_external_analysis_report_file(
         analysis_company = session.get(Company, record.analysis_company_id)
         analysis_company_name = analysis_company.name if analysis_company else None
     return ExternalAnalysisRecordRead(
-        id=record.id,
+        id=record_id,
         terminal_id=record.terminal_id,
         analysis_type_id=record.analysis_type_id,
         analysis_type_name=analysis_type_name,
@@ -472,25 +575,45 @@ def upload_external_analysis_report_file(
 @router.patch(
     "/records/{record_id}",
     response_model=ExternalAnalysisRecordRead,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_external_analysis_record(
     record_id: int,
     payload: ExternalAnalysisRecordUpdate,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> ExternalAnalysisRecordRead:
+    """
+    Actualiza un registro de análisis externo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: registro no encontrado.
+    """
     record = session.get(ExternalAnalysisRecord, record_id)
     if not record:
-        raise HTTPException(status_code=404, detail="External analysis record not found")
+        raise HTTPException(
+            status_code=404, detail="External analysis record not found"
+        )
     _check_terminal_access(session, current_user, record.terminal_id)
 
     update_data = payload.model_dump(exclude_unset=True)
     if "analysis_type_id" in update_data:
-        analysis_type = session.get(ExternalAnalysisType, update_data["analysis_type_id"])
+        analysis_type = session.get(
+            ExternalAnalysisType, update_data["analysis_type_id"]
+        )
         if not analysis_type:
-            raise HTTPException(status_code=404, detail="External analysis type not found")
+            raise HTTPException(
+                status_code=404, detail="External analysis type not found"
+            )
     if "analysis_company_id" in update_data:
         if update_data["analysis_company_id"] is not None:
             analysis_company = session.get(Company, update_data["analysis_company_id"])
@@ -509,6 +632,7 @@ def update_external_analysis_record(
     session.add(record)
     session.commit()
     session.refresh(record)
+    record_id = _require_id(record.id, "ExternalAnalysisRecord")
 
     analysis_type = session.get(ExternalAnalysisType, record.analysis_type_id)
     analysis_type_name = analysis_type.name if analysis_type else ""
@@ -517,7 +641,7 @@ def update_external_analysis_record(
         analysis_company = session.get(Company, record.analysis_company_id)
         analysis_company_name = analysis_company.name if analysis_company else None
     return ExternalAnalysisRecordRead(
-        id=record.id,
+        id=record_id,
         terminal_id=record.terminal_id,
         analysis_type_id=record.analysis_type_id,
         analysis_type_name=analysis_type_name,
@@ -538,17 +662,33 @@ def update_external_analysis_record(
 @router.delete(
     "/records/{record_id}",
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def delete_external_analysis_record(
     record_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> dict:
+    """
+    Elimina un registro de análisis externo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: registro no encontrado.
+    """
     record = session.get(ExternalAnalysisRecord, record_id)
     if not record:
-        raise HTTPException(status_code=404, detail="External analysis record not found")
+        raise HTTPException(
+            status_code=404, detail="External analysis record not found"
+        )
     _check_terminal_access(session, current_user, record.terminal_id)
     session.delete(record)
     session.commit()

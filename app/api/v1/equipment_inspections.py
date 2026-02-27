@@ -1,13 +1,13 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from datetime import UTC, datetime, timedelta
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlmodel import Session, select, delete
+from sqlalchemy import desc
+from sqlmodel import Session, delete, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
+from app.models.enums import EquipmentStatus, InspectionResponseType, UserType
 from app.models.equipment import Equipment
 from app.models.equipment_calibration import EquipmentCalibration
 from app.models.equipment_inspection import (
@@ -15,8 +15,8 @@ from app.models.equipment_inspection import (
     EquipmentInspectionCreate,
     EquipmentInspectionListResponse,
     EquipmentInspectionRead,
-    EquipmentInspectionResponseCreate,
     EquipmentInspectionResponse,
+    EquipmentInspectionResponseCreate,
     EquipmentInspectionResponseRead,
     EquipmentInspectionUpdate,
 )
@@ -24,7 +24,6 @@ from app.models.equipment_type import EquipmentType
 from app.models.equipment_type_inspection_item import (
     EquipmentTypeInspectionItem,
 )
-from app.models.enums import EquipmentStatus, InspectionResponseType, UserType
 from app.models.user import User
 from app.models.user_terminal import UserTerminal
 
@@ -32,6 +31,15 @@ router = APIRouter(
     prefix="/equipment-inspections",
     tags=["Equipment Inspections"],
 )
+
+
+def _require_id(value: int | None, label: str) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{label} has no ID",
+        )
+    return value
 
 
 def _validate_response(
@@ -89,12 +97,17 @@ def _evaluate_response(
             return response.value_number == item.expected_number
         if item.expected_number_min is None and item.expected_number_max is None:
             return None
-        if item.expected_number_min is not None and response.value_number < item.expected_number_min:
+        if (
+            item.expected_number_min is not None
+            and response.value_number < item.expected_number_min
+        ):
             return False
-        if item.expected_number_max is not None and response.value_number > item.expected_number_max:
+        if (
+            item.expected_number_max is not None
+            and response.value_number > item.expected_number_max
+        ):
             return False
         return True
-    return None
 
 
 def _as_utc(dt_value: datetime) -> datetime:
@@ -105,18 +118,16 @@ def _as_utc(dt_value: datetime) -> datetime:
 
 def _require_valid_calibration(session: Session, equipment: Equipment) -> None:
     equipment_type = session.get(EquipmentType, equipment.equipment_type_id)
-    calibration_days = (
-        equipment_type.calibration_days if equipment_type else None
-    )
+    calibration_days = equipment_type.calibration_days if equipment_type else None
     latest = session.exec(
         select(EquipmentCalibration)
         .where(EquipmentCalibration.equipment_id == equipment.id)
-        .order_by(EquipmentCalibration.calibrated_at.desc())
+        .order_by(desc(EquipmentCalibration.calibrated_at))  # type: ignore[arg-type]
     ).first()
     if not latest or not latest.calibrated_at:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El equipo no cuenta con calibracion vigente.",
+            detail="El equipo no cuenta con calibración vigente.",
         )
     if calibration_days is None or calibration_days <= 0:
         return
@@ -125,7 +136,7 @@ def _require_valid_calibration(session: Session, equipment: Equipment) -> None:
     if datetime.now(UTC) > expires_at:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="El equipo no cuenta con calibracion vigente.",
+            detail="El equipo no cuenta con calibración vigente.",
         )
 
 
@@ -133,16 +144,39 @@ def _require_valid_calibration(session: Session, equipment: Equipment) -> None:
     "/equipment/{equipment_id}",
     response_model=EquipmentInspectionRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def create_equipment_inspection(
     equipment_id: int,
     payload: EquipmentInspectionCreate,
-    replace_existing: bool = Query(False, alias="replace_existing"),
+    replace_existing: bool = Query(
+        False,
+        alias="replace_existing",
+        description=(
+            "Si es `true`, reemplaza la inspección abierta existente "
+            "en lugar de crear una nueva."
+        ),
+    ),
     session: Session = Depends(get_session),
     current_user: User = Depends(
         require_role(UserType.user, UserType.admin, UserType.superadmin)
     ),
 ) -> EquipmentInspectionRead:
+    """
+    Crea una inspección para un equipo.
+
+    Permisos: `user`, `admin`, `superadmin`.
+    Parámetros:
+    - `replace_existing`: si es `true`, reemplaza la inspección abierta del día.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -162,7 +196,9 @@ def create_equipment_inspection(
                 UserTerminal.user_id == current_user.id
             )
         ).all()
-        if allowed_terminal_ids and equipment.terminal_id not in set(allowed_terminal_ids):
+        if allowed_terminal_ids and equipment.terminal_id not in set(
+            allowed_terminal_ids
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this terminal",
@@ -172,16 +208,13 @@ def create_equipment_inspection(
 
     items = session.exec(
         select(EquipmentTypeInspectionItem).where(
-            EquipmentTypeInspectionItem.equipment_type_id
-            == equipment.equipment_type_id
+            EquipmentTypeInspectionItem.equipment_type_id == equipment.equipment_type_id
         )
     ).all()
     items_by_id = {item.id: item for item in items if item.id is not None}
     required_ids = {item.id for item in items if item.is_required}
 
-    response_item_ids = [
-        r.inspection_item_id for r in payload.responses
-    ]
+    response_item_ids = [r.inspection_item_id for r in payload.responses]
     if len(response_item_ids) != len(set(response_item_ids)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -193,7 +226,9 @@ def create_equipment_inspection(
             detail="Missing required inspection items",
         )
 
-    evaluated_responses: list[tuple[EquipmentInspectionResponseCreate, bool | None]] = []
+    evaluated_responses: list[
+        tuple[EquipmentInspectionResponseCreate, bool | None]
+    ] = []
     for response in payload.responses:
         if response.inspection_item_id not in items_by_id:
             raise HTTPException(
@@ -214,12 +249,14 @@ def create_equipment_inspection(
         )
         evaluated_responses.append((response, _evaluate_response(item, response)))
 
-    inspected_at = _as_utc(payload.inspected_at) if payload.inspected_at else datetime.now(UTC)
+    inspected_at = (
+        _as_utc(payload.inspected_at) if payload.inspected_at else datetime.now(UTC)
+    )
     now = datetime.now(UTC)
     if inspected_at.date() > now.date():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La fecha de inspeccion no puede ser posterior a hoy.",
+            detail="La fecha de inspección no puede ser posterior a hoy.",
         )
     day_start = datetime(
         inspected_at.year,
@@ -239,24 +276,24 @@ def create_equipment_inspection(
         if not replace_existing:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Ya se realizo una inspeccion hoy. Deseas reemplazarla?",
+                detail="Ya se realizó una inspección hoy. ¿Deseas reemplazarla?",
             )
         if existing_same_day.id is not None:
             session.exec(
                 delete(EquipmentInspectionResponse).where(
-                    EquipmentInspectionResponse.inspection_id
-                    == existing_same_day.id
+                    EquipmentInspectionResponse.inspection_id == existing_same_day.id  # type: ignore[arg-type]
                 )
             )
             session.exec(
                 delete(EquipmentInspection).where(
-                    EquipmentInspection.id == existing_same_day.id
+                    EquipmentInspection.id == existing_same_day.id  # type: ignore[arg-type]
                 )
             )
             session.commit()
     inspection_ok = all(is_ok is True for _, is_ok in evaluated_responses)
+    equipment_db_id = _require_id(equipment.id, "Equipment")
     inspection = EquipmentInspection(
-        equipment_id=equipment.id,
+        equipment_id=equipment_db_id,
         inspected_at=inspected_at,
         created_by_user_id=current_user.id,
         notes=payload.notes,
@@ -265,11 +302,12 @@ def create_equipment_inspection(
     session.add(inspection)
     session.commit()
     session.refresh(inspection)
+    inspection_db_id = _require_id(inspection.id, "Inspection")
 
     for response, is_ok in evaluated_responses:
         session.add(
             EquipmentInspectionResponse(
-                inspection_id=inspection.id,
+                inspection_id=inspection_db_id,
                 inspection_item_id=response.inspection_item_id,
                 response_type=response.response_type,
                 value_bool=response.value_bool,
@@ -282,7 +320,7 @@ def create_equipment_inspection(
 
     responses = session.exec(
         select(EquipmentInspectionResponse).where(
-            EquipmentInspectionResponse.inspection_id == inspection.id
+            EquipmentInspectionResponse.inspection_id == inspection_db_id
         )
     ).all()
     message: str | None = None
@@ -310,14 +348,28 @@ def create_equipment_inspection(
     "/equipment/{equipment_id}",
     response_model=EquipmentInspectionListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_inspections(
     equipment_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Any:
+    """
+    Lista inspecciones de un equipo.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: equipo no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -343,12 +395,12 @@ def list_equipment_inspections(
         items.append(
             EquipmentInspectionRead(
                 **inspection.model_dump(),
-                  responses=[
-                      EquipmentInspectionResponseRead.model_validate(
-                          r, from_attributes=True
-                      )
-                      for r in responses
-                  ],
+                responses=[
+                    EquipmentInspectionResponseRead.model_validate(
+                        r, from_attributes=True
+                    )
+                    for r in responses
+                ],
             )
         )
     return EquipmentInspectionListResponse(items=items)
@@ -358,14 +410,28 @@ def list_equipment_inspections(
     "/{inspection_id}",
     response_model=EquipmentInspectionRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def get_equipment_inspection(
     inspection_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> EquipmentInspectionRead:
+    """
+    Obtiene una inspección por ID.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     inspection = session.get(EquipmentInspection, inspection_id)
     if not inspection:
         raise HTTPException(
@@ -379,12 +445,10 @@ def get_equipment_inspection(
     ).all()
     return EquipmentInspectionRead(
         **inspection.model_dump(),
-          responses=[
-              EquipmentInspectionResponseRead.model_validate(
-                  r, from_attributes=True
-              )
-              for r in responses
-          ],
+        responses=[
+            EquipmentInspectionResponseRead.model_validate(r, from_attributes=True)
+            for r in responses
+        ],
     )
 
 
@@ -392,15 +456,25 @@ def get_equipment_inspection(
     "/{inspection_id}",
     response_model=EquipmentInspectionRead,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def update_equipment_inspection(
     inspection_id: int,
     payload: EquipmentInspectionUpdate,
     session: Session = Depends(get_session),
-    current_user: User = Depends(
-        require_role(UserType.admin, UserType.superadmin)
-    ),
+    current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentInspectionRead:
+    """
+    Actualiza una inspección existente por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -427,7 +501,9 @@ def update_equipment_inspection(
                 UserTerminal.user_id == current_user.id
             )
         ).all()
-        if allowed_terminal_ids and equipment.terminal_id not in set(allowed_terminal_ids):
+        if allowed_terminal_ids and equipment.terminal_id not in set(
+            allowed_terminal_ids
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this terminal",
@@ -435,16 +511,13 @@ def update_equipment_inspection(
 
     items = session.exec(
         select(EquipmentTypeInspectionItem).where(
-            EquipmentTypeInspectionItem.equipment_type_id
-            == equipment.equipment_type_id
+            EquipmentTypeInspectionItem.equipment_type_id == equipment.equipment_type_id
         )
     ).all()
     items_by_id = {item.id: item for item in items if item.id is not None}
     required_ids = {item.id for item in items if item.is_required}
 
-    response_item_ids = [
-        r.inspection_item_id for r in payload.responses
-    ]
+    response_item_ids = [r.inspection_item_id for r in payload.responses]
     if len(response_item_ids) != len(set(response_item_ids)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -456,7 +529,9 @@ def update_equipment_inspection(
             detail="Missing required inspection items",
         )
 
-    evaluated_responses: list[tuple[EquipmentInspectionResponseCreate, bool | None]] = []
+    evaluated_responses: list[
+        tuple[EquipmentInspectionResponseCreate, bool | None]
+    ] = []
     for response in payload.responses:
         if response.inspection_item_id not in items_by_id:
             raise HTTPException(
@@ -477,12 +552,16 @@ def update_equipment_inspection(
         )
         evaluated_responses.append((response, _evaluate_response(item, response)))
 
-    inspected_at = _as_utc(payload.inspected_at) if payload.inspected_at else _as_utc(inspection.inspected_at)
+    inspected_at = (
+        _as_utc(payload.inspected_at)
+        if payload.inspected_at
+        else _as_utc(inspection.inspected_at)
+    )
     now = datetime.now(UTC)
     if inspected_at.date() > now.date():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La fecha de inspeccion no puede ser posterior a hoy.",
+            detail="La fecha de inspección no puede ser posterior a hoy.",
         )
     day_start = datetime(
         inspected_at.year,
@@ -502,7 +581,7 @@ def update_equipment_inspection(
     if existing_same_day:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Ya existe una inspeccion para esta fecha.",
+            detail="Ya existe una inspección para esta fecha.",
         )
 
     inspection_ok = all(is_ok is True for _, is_ok in evaluated_responses)
@@ -510,15 +589,16 @@ def update_equipment_inspection(
     inspection.notes = payload.notes
     inspection.is_ok = inspection_ok
     session.add(inspection)
+    inspection_db_id = _require_id(inspection.id, "Inspection")
     session.exec(
         delete(EquipmentInspectionResponse).where(
-            EquipmentInspectionResponse.inspection_id == inspection.id
+            EquipmentInspectionResponse.inspection_id == inspection_db_id  # type: ignore[arg-type]
         )
     )
     for response, is_ok in evaluated_responses:
         session.add(
             EquipmentInspectionResponse(
-                inspection_id=inspection.id,
+                inspection_id=inspection_db_id,
                 inspection_item_id=response.inspection_item_id,
                 response_type=response.response_type,
                 value_bool=response.value_bool,
@@ -532,7 +612,7 @@ def update_equipment_inspection(
 
     responses = session.exec(
         select(EquipmentInspectionResponse).where(
-            EquipmentInspectionResponse.inspection_id == inspection.id
+            EquipmentInspectionResponse.inspection_id == inspection_db_id
         )
     ).all()
     message: str | None = None

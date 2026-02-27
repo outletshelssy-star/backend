@@ -23,13 +23,20 @@ router = APIRouter(prefix="/hydrometer", tags=["Hydrometer"])
     "/api60f",
     response_model=Api60fResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Valor de temperatura o API fuera de rango"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def calculate_api_60f(
     payload: Api60fRequest,
     _: object = Depends(
-        require_role(UserType.visitor, UserType.user, UserType.admin, UserType.superadmin)
+        require_role(
+            UserType.visitor, UserType.user, UserType.admin, UserType.superadmin
+        )
     ),
 ) -> Api60fResponse:
+    """Calcula el API corregido a 60F a partir de temperatura observada."""
     try:
         api_60f = api_60f_crude(payload.temp_obs_f, payload.lectura_api)
     except ValueError as exc:

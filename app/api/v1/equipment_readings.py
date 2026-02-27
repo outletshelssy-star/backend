@@ -2,10 +2,12 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import desc
 from sqlmodel import Session, select
 
 from app.core.security.authorization import require_role
 from app.db.session import get_session
+from app.models.enums import EquipmentStatus, UserType
 from app.models.equipment import Equipment
 from app.models.equipment_inspection import EquipmentInspection
 from app.models.equipment_reading import (
@@ -15,7 +17,6 @@ from app.models.equipment_reading import (
     EquipmentReadingRead,
 )
 from app.models.equipment_type import EquipmentType
-from app.models.enums import EquipmentStatus, UserType
 from app.models.user import User
 from app.utils.measurements.temperature import Temperature
 
@@ -23,6 +24,15 @@ router = APIRouter(
     prefix="/equipment-readings",
     tags=["Equipment Readings"],
 )
+
+
+def _require_id(value: int | None, label: str) -> int:
+    if value is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"{label} has no ID",
+        )
+    return value
 
 
 def _normalize_temperature(value: float, unit: str) -> float:
@@ -63,6 +73,11 @@ def _as_utc(dt_value: datetime) -> datetime:
     "/equipment/{equipment_id}",
     response_model=EquipmentReadingRead,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+        status.HTTP_400_BAD_REQUEST: {"description": "Solicitud inválida"},
+    },
 )
 def create_equipment_reading(
     equipment_id: int,
@@ -70,6 +85,15 @@ def create_equipment_reading(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> EquipmentReadingRead:
+    """
+    Registra una lectura de equipo (temperatura) para un equipo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 400: solicitud inválida.
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     if current_user.id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -100,7 +124,9 @@ def create_equipment_reading(
         )
 
     value_celsius = _normalize_temperature(payload.value, payload.unit)
-    measured_at = _as_utc(payload.measured_at) if payload.measured_at else datetime.now(UTC)
+    measured_at = (
+        _as_utc(payload.measured_at) if payload.measured_at else datetime.now(UTC)
+    )
 
     inspection_days = _get_inspection_days(equipment, equipment_type)
     if inspection_days > 0:
@@ -115,7 +141,7 @@ def create_equipment_reading(
             select(EquipmentInspection)
             .where(EquipmentInspection.equipment_id == equipment.id)
             .where(EquipmentInspection.inspected_at < day_end)
-            .order_by(EquipmentInspection.inspected_at.desc())
+            .order_by(desc(EquipmentInspection.inspected_at))  # type: ignore[arg-type]
         ).first()
         if not last_inspection:
             raise HTTPException(
@@ -130,8 +156,9 @@ def create_equipment_reading(
                 detail="Last inspection is older than allowed window",
             )
 
+    equipment_db_id = _require_id(equipment.id, "Equipment")
     reading = EquipmentReading(
-        equipment_id=equipment.id,
+        equipment_id=equipment_db_id,
         value_celsius=value_celsius,
         measured_at=measured_at,
         created_by_user_id=current_user.id,
@@ -146,12 +173,24 @@ def create_equipment_reading(
     "/equipment/{equipment_id}",
     response_model=EquipmentReadingListResponse,
     status_code=status.HTTP_200_OK,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Recurso no encontrado"},
+        status.HTTP_403_FORBIDDEN: {"description": "Permisos insuficientes"},
+    },
 )
 def list_equipment_readings(
     equipment_id: int,
     session: Session = Depends(get_session),
     _: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> Any:
+    """
+    Lista lecturas de un equipo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     equipment = session.get(Equipment, equipment_id)
     if not equipment:
         raise HTTPException(
@@ -162,7 +201,7 @@ def list_equipment_readings(
     readings = session.exec(
         select(EquipmentReading)
         .where(EquipmentReading.equipment_id == equipment_id)
-        .order_by(EquipmentReading.measured_at.desc())
+        .order_by(desc(EquipmentReading.measured_at))  # type: ignore[arg-type]
     ).all()
     if not readings:
         return EquipmentReadingListResponse(message="No records found")
