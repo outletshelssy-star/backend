@@ -54,7 +54,9 @@ class CompanyTerminalCreate(SQLModel):
         if not normalized:
             return None
         if not normalized.isalnum() or not (3 <= len(normalized) <= 4):
-            raise ValueError("Terminal code must be 3 to 4 alphanumeric characters (A-Z, 0-9).")
+            raise ValueError(
+                "Terminal code must be 3 to 4 alphanumeric characters (A-Z, 0-9)."
+            )
         return normalized
 
 
@@ -84,7 +86,9 @@ class CompanyTerminalUpdate(SQLModel):
         if not normalized:
             return None
         if not normalized.isalnum() or not (3 <= len(normalized) <= 4):
-            raise ValueError("Terminal code must be 3 to 4 alphanumeric characters (A-Z, 0-9).")
+            raise ValueError(
+                "Terminal code must be 3 to 4 alphanumeric characters (A-Z, 0-9)."
+            )
         return normalized
 
 

@@ -1,15 +1,15 @@
 from sqlmodel import Field, SQLModel
 
 from app.models.enums import EquipmentStatus
+from app.models.equipment_calibration import EquipmentCalibrationRead
+from app.models.equipment_inspection import EquipmentInspectionRead
 from app.models.equipment_measure_spec import (
     EquipmentMeasureSpecCreate,
     EquipmentMeasureSpecRead,
 )
+from app.models.equipment_verification import EquipmentVerificationRead
 from app.models.mixins.audit import AuditMixin
 from app.models.refs import CompanyRef, CompanyTerminalRef, EquipmentTypeRef, UserRef
-from app.models.equipment_inspection import EquipmentInspectionRead
-from app.models.equipment_verification import EquipmentVerificationRead
-from app.models.equipment_calibration import EquipmentCalibrationRead
 
 
 class EquipmentComponentSerialBase(SQLModel):
@@ -83,7 +83,9 @@ class EquipmentCreate(SQLModel):
     equipment_type_id: int
     owner_company_id: int
     terminal_id: int
-    component_serials: list[EquipmentComponentSerialCreate] = Field(default_factory=list)
+    component_serials: list[EquipmentComponentSerialCreate] = Field(
+        default_factory=list
+    )
     measure_specs: list[EquipmentMeasureSpecCreate] = Field(default_factory=list)
     weight_class: str | None = None
     nominal_mass_value: float | None = None

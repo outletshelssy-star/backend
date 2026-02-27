@@ -11,9 +11,7 @@ class ExternalAnalysisRecord(AuditMixin, SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     terminal_id: int = Field(foreign_key="company_terminal.id")
     analysis_type_id: int = Field(foreign_key="external_analysis_type.id")
-    analysis_company_id: int | None = Field(
-        default=None, foreign_key="company.id"
-    )
+    analysis_company_id: int | None = Field(default=None, foreign_key="company.id")
     performed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     report_number: str | None = None
     report_pdf_url: str | None = None

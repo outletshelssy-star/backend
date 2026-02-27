@@ -6,27 +6,21 @@ from app.models.enums import InspectionResponseType
 
 
 class EquipmentVerification(SQLModel, table=True):
-    __tablename__ = "equipment_verification"  # type: ignore[assignment]
+    __tablename__ = "equipment_verification"
     id: int | None = Field(default=None, primary_key=True)
     equipment_id: int = Field(foreign_key="equipment.id")
-    verification_type_id: int = Field(
-        foreign_key="equipment_type_verification.id"
-    )
-    verified_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    verification_type_id: int = Field(foreign_key="equipment_type_verification.id")
+    verified_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     created_by_user_id: int = Field(foreign_key="user.id")
     notes: str | None = None
     is_ok: bool | None = None
 
 
 class EquipmentVerificationResponse(SQLModel, table=True):
-    __tablename__ = "equipment_verification_response"  # type: ignore[assignment]
+    __tablename__ = "equipment_verification_response"
     id: int | None = Field(default=None, primary_key=True)
     verification_id: int = Field(foreign_key="equipment_verification.id")
-    verification_item_id: int = Field(
-        foreign_key="equipment_type_verification_item.id"
-    )
+    verification_item_id: int = Field(foreign_key="equipment_type_verification_item.id")
     response_type: InspectionResponseType
     value_bool: bool | None = None
     value_text: str | None = None
@@ -63,9 +57,7 @@ class EquipmentVerificationCreate(SQLModel):
     reference_reading_high_value: float | None = None
     reference_reading_mid_value: float | None = None
     reference_reading_low_value: float | None = None
-    responses: list[EquipmentVerificationResponseCreate] = Field(
-        default_factory=list
-    )
+    responses: list[EquipmentVerificationResponseCreate] = Field(default_factory=list)
 
 
 class EquipmentVerificationUpdate(SQLModel):
@@ -89,9 +81,7 @@ class EquipmentVerificationUpdate(SQLModel):
     reference_reading_high_value: float | None = None
     reference_reading_mid_value: float | None = None
     reference_reading_low_value: float | None = None
-    responses: list[EquipmentVerificationResponseCreate] = Field(
-        default_factory=list
-    )
+    responses: list[EquipmentVerificationResponseCreate] = Field(default_factory=list)
 
 
 class EquipmentVerificationResponseRead(SQLModel):
@@ -121,9 +111,7 @@ class EquipmentVerificationRead(SQLModel):
     reference_reading_low_value: float | None = None
     reading_under_test_unit: str | None = None
     reference_reading_unit: str | None = None
-    responses: list[EquipmentVerificationResponseRead] = Field(
-        default_factory=list
-    )
+    responses: list[EquipmentVerificationResponseRead] = Field(default_factory=list)
     message: str | None = None
 
 

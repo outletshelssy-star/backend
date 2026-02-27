@@ -1,25 +1,25 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class UserType(str, Enum):
+class UserType(StrEnum):
     superadmin = "superadmin"
     admin = "admin"
     user = "user"
     visitor = "visitor"
 
 
-class CompanyType(str, Enum):
+class CompanyType(StrEnum):
     master = "master"
     client = "client"
     partner = "partner"
 
 
-class EquipmentRole(str, Enum):
+class EquipmentRole(StrEnum):
     reference = "reference"
     working = "working"
 
 
-class EquipmentMeasureType(str, Enum):
+class EquipmentMeasureType(StrEnum):
     temperature = "temperature"
     relative_humidity = "relative_humidity"
     pressure = "pressure"
@@ -29,7 +29,7 @@ class EquipmentMeasureType(str, Enum):
     percent_pv = "percent_pv"
 
 
-class EquipmentStatus(str, Enum):
+class EquipmentStatus(StrEnum):
     stored = "stored"
     in_use = "in_use"
     maintenance = "maintenance"
@@ -39,12 +39,12 @@ class EquipmentStatus(str, Enum):
     unknown = "unknown"
 
 
-class InspectionResponseType(str, Enum):
+class InspectionResponseType(StrEnum):
     boolean = "boolean"
     text = "text"
     number = "number"
 
 
-class SampleAnalysisType(str, Enum):
+class SampleAnalysisType(StrEnum):
     api_astm_1298 = "api_astm_1298"
     water_astm_4377 = "water_astm_4377"

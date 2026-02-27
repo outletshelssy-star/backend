@@ -5,12 +5,10 @@ from app.models.enums import InspectionResponseType
 
 
 class EquipmentTypeVerificationItem(SQLModel, table=True):
-    __tablename__ = "equipment_type_verification_item"  # type: ignore[assignment]
+    __tablename__ = "equipment_type_verification_item"
     id: int | None = Field(default=None, primary_key=True)
     equipment_type_id: int = Field(foreign_key="equipment_type.id")
-    verification_type_id: int = Field(
-        foreign_key="equipment_type_verification.id"
-    )
+    verification_type_id: int = Field(foreign_key="equipment_type_verification.id")
     item: str = Field(min_length=2)
     response_type: InspectionResponseType
     is_required: bool = Field(default=True)

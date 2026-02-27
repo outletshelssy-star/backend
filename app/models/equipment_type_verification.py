@@ -2,7 +2,7 @@ from sqlmodel import Field, SQLModel
 
 
 class EquipmentTypeVerification(SQLModel, table=True):
-    __tablename__ = "equipment_type_verification"  # type: ignore[assignment]
+    __tablename__ = "equipment_type_verification"
     id: int | None = Field(default=None, primary_key=True)
     equipment_type_id: int = Field(foreign_key="equipment_type.id")
     name: str = Field(min_length=2)

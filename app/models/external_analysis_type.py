@@ -1,5 +1,5 @@
-from sqlmodel import Field, SQLModel
 from sqlalchemy import UniqueConstraint
+from sqlmodel import Field, SQLModel
 
 from app.models.mixins.audit import AuditMixin
 

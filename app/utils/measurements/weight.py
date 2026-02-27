@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,19 +83,19 @@ class Weight:
     def __lt__(self, other: object) -> bool:
         if isinstance(other, Weight):
             return self.grams < other.grams
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented
 
     def __le__(self, other: object) -> bool:
         if isinstance(other, Weight):
             return self.grams <= other.grams
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented
 
     def __gt__(self, other: object) -> bool:
         if isinstance(other, Weight):
             return self.grams > other.grams
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented
 
     def __ge__(self, other: object) -> bool:
         if isinstance(other, Weight):
             return self.grams >= other.grams
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented

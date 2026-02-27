@@ -6,8 +6,8 @@ from sqlmodel import Field, SQLModel
 from app.core.security.password import hash_password
 from app.core.validators.urls import validate_url
 from app.models.enums import UserType
-from app.models.refs import CompanyRef, CompanyTerminalRef
 from app.models.mixins.audit import AuditMixin
+from app.models.refs import CompanyRef, CompanyTerminalRef
 
 
 class UserBase(SQLModel):
@@ -55,7 +55,7 @@ class UserBase(SQLModel):
 class User(AuditMixin, UserBase, table=True):
     id: int | None = Field(default=None, primary_key=True)
     password_hash: str = Field(nullable=False)
-    refresh_token_hash: str | None = None
+    refresh_token_hash: str | None = Field(default=None, index=True)
     token_version: int = Field(default=0)
     company_id: int | None = Field(default=None, foreign_key="company.id")
 

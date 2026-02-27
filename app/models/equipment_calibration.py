@@ -4,12 +4,10 @@ from sqlmodel import Field, SQLModel
 
 
 class EquipmentCalibration(SQLModel, table=True):
-    __tablename__ = "equipment_calibration"  # type: ignore[assignment]
+    __tablename__ = "equipment_calibration"
     id: int | None = Field(default=None, primary_key=True)
     equipment_id: int = Field(foreign_key="equipment.id")
-    calibrated_at: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    calibrated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     created_by_user_id: int = Field(foreign_key="user.id")
     calibration_company_id: int | None = Field(default=None, foreign_key="company.id")
     certificate_number: str = Field(default="PENDIENTE")
@@ -18,7 +16,7 @@ class EquipmentCalibration(SQLModel, table=True):
 
 
 class EquipmentCalibrationResult(SQLModel, table=True):
-    __tablename__ = "equipment_calibration_result"  # type: ignore[assignment]
+    __tablename__ = "equipment_calibration_result"
     id: int | None = Field(default=None, primary_key=True)
     calibration_id: int = Field(foreign_key="equipment_calibration.id")
     point_label: str | None = None

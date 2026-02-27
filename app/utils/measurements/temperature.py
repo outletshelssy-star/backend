@@ -84,19 +84,19 @@ class Temperature:
     def __lt__(self, other: object) -> bool:
         if isinstance(other, Temperature):
             return self.celsius < other.celsius
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented
 
     def __le__(self, other: object) -> bool:
         if isinstance(other, Temperature):
             return self.celsius <= other.celsius
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented
 
     def __gt__(self, other: object) -> bool:
         if isinstance(other, Temperature):
             return self.celsius > other.celsius
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented
 
     def __ge__(self, other: object) -> bool:
         if isinstance(other, Temperature):
             return self.celsius >= other.celsius
-        return NotImplemented  # type: ignore[return-value]
+        return NotImplemented

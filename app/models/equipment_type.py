@@ -28,8 +28,8 @@ class EquipmentTypeBase(SQLModel):
 
 
 class EquipmentType(AuditMixin, EquipmentTypeBase, table=True):
-    __tablename__ = "equipment_type"  # type: ignore[misc]
-    __table_args__ = (  # type: ignore[misc]
+    __tablename__ = "equipment_type"
+    __table_args__ = (
         UniqueConstraint("name", "role", name="uq_equipment_type_name_role"),
     )
     id: int | None = Field(default=None, primary_key=True)

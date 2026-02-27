@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from functools import lru_cache
+from typing import Any, cast
 
 from fastapi import HTTPException, UploadFile, status
 from supabase import create_client
@@ -9,14 +11,21 @@ from supabase import create_client
 from app.core.config import get_settings
 
 
-def _get_client():
+@lru_cache(maxsize=1)
+def _create_cached_client(url: str, key: str) -> Any:
+    return create_client(url, key)
+
+
+def _get_client() -> Any:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_service_role_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Supabase storage is not configured",
         )
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+    return _create_cached_client(
+        settings.supabase_url, settings.supabase_service_role_key
+    )
 
 
 def upload_user_photo(file: UploadFile, user_id: int) -> str:
@@ -57,7 +66,7 @@ def upload_user_photo(file: UploadFile, user_id: int) -> str:
             detail="Could not generate public URL",
         )
 
-    return public_url
+    return cast(str, public_url)
 
 
 def upload_calibration_certificate(
@@ -116,7 +125,7 @@ def upload_calibration_certificate(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not generate public URL",
         )
-    return public_url
+    return cast(str, public_url)
 
 
 def upload_external_analysis_report(file: UploadFile, record_id: int) -> str:
@@ -154,7 +163,7 @@ def upload_external_analysis_report(file: UploadFile, record_id: int) -> str:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not generate public URL",
         )
-    return public_url
+    return cast(str, public_url)
 
 
 def delete_user_photo(photo_url: str) -> None:
