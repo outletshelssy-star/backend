@@ -176,7 +176,9 @@ def ensure_default_equipment_type_inspection_items(
         for item_data in seed["items"]:
             current = existing_by_text.get(item_data["item"])
             if current:
-                current.response_type = InspectionResponseType(item_data["response_type"])
+                current.response_type = InspectionResponseType(
+                    item_data["response_type"]
+                )
                 current.is_required = item_data["is_required"]
                 current.order = item_data["order"]
                 current.expected_bool = item_data.get("expected_bool")
@@ -216,8 +218,8 @@ def ensure_default_equipment_type_verifications(session: Session) -> None:
         if not equipment_type or equipment_type.id is None:
             continue
 
-        defaults = seed.get("verification_types")
-        if defaults is None:
+        defaults = seed["verification_types"]
+        if not defaults:
             defaults = [
                 {
                     "name": "Verificacion",

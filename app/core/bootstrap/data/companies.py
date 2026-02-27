@@ -1,4 +1,31 @@
-DEFAULT_BLOCKS = [
+from typing import NotRequired, TypedDict
+
+
+class TerminalSeed(TypedDict):
+    name: str
+    block: str
+    code: str
+    has_lab: bool
+    is_active: NotRequired[bool]
+    lab_terminal: NotRequired[str]
+
+
+class CompanySeed(TypedDict):
+    name: str
+    company_type: str
+
+
+class UserSeed(TypedDict):
+    name: str
+    last_name: str
+    email: str
+    password: str
+    user_type: str
+    terminals: NotRequired[list[str]]
+    company: NotRequired[str]
+
+
+DEFAULT_BLOCKS: list[str] = [
     "Arrendajo",
     "Cachicamo",
     "Entrerrios",
@@ -16,13 +43,13 @@ DEFAULT_BLOCKS = [
     "Hamaca",
 ]
 
-DEFAULT_INACTIVE_BLOCKS = {
+DEFAULT_INACTIVE_BLOCKS: set[str] = {
     "Canaguaro",
     "La Creciente",
     "Entrerrios",
 }
 
-DEFAULT_TERMINALS = [
+DEFAULT_TERMINALS: list[TerminalSeed] = [
     {
         "name": "Azor",
         "block": "Arrendajo",
@@ -307,9 +334,9 @@ DEFAULT_TERMINALS = [
     },
 ]
 
-DEFAULT_PRIMARY_COMPANY_NAME = "Frontera Energy"
+DEFAULT_PRIMARY_COMPANY_NAME: str = "Frontera Energy"
 
-DEFAULT_COMPANIES = [
+DEFAULT_COMPANIES: list[CompanySeed] = [
     {
         "name": "Frontera Energy",
         "company_type": "master",
@@ -356,7 +383,7 @@ DEFAULT_COMPANIES = [
     },
 ]
 
-DEFAULT_USERS = [
+DEFAULT_USERS: list[UserSeed] = [
     {
         "name": "Admin",
         "last_name": "User",

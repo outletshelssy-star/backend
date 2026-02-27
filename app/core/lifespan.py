@@ -7,9 +7,9 @@ from sqlmodel import Session
 from app.core.bootstrap.company import ensure_default_company
 from app.core.bootstrap.equipment import ensure_default_equipment
 from app.core.bootstrap.equipment_type import (
-    ensure_default_equipment_types,
     ensure_default_equipment_type_inspection_items,
     ensure_default_equipment_type_verifications,
+    ensure_default_equipment_types,
 )
 from app.core.bootstrap.external_analysis import ensure_default_external_analysis_types
 from app.core.bootstrap.superadmin import ensure_superadmin

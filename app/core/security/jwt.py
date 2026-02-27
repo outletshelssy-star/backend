@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from jose import jwt
 
@@ -27,4 +27,4 @@ def create_access_token(
         "exp": expire,
     }
 
-    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+    return cast(str, jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM))

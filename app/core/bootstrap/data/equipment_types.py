@@ -1,4 +1,55 @@
-DEFAULT_EQUIPMENT_TYPES = [
+from typing import NotRequired, TypedDict
+
+
+class VerificationTypeSeed(TypedDict):
+    name: str
+    frequency_days: int
+    is_active: bool
+    order: int
+
+
+class MaxErrorSeed(TypedDict):
+    measure: str
+    max_error_value: float
+    unit: str
+
+
+class EquipmentTypeSeed(TypedDict):
+    name: str
+    role: str
+    calibration_days: int
+    maintenance_days: int
+    inspection_days: int
+    observations: str | None
+    measures: list[str]
+    max_errors: list[MaxErrorSeed]
+    verification_types: list[VerificationTypeSeed]
+    is_lab: NotRequired[bool]
+
+
+class EquipmentTypeRefSeed(TypedDict):
+    name: str
+    role: str
+
+
+class InspectionItemSeed(TypedDict):
+    item: str
+    response_type: str
+    is_required: bool
+    order: int
+    expected_bool: NotRequired[bool]
+    expected_text_options: NotRequired[list[str]]
+    expected_number: NotRequired[float]
+    expected_number_min: NotRequired[float]
+    expected_number_max: NotRequired[float]
+
+
+class InspectionItemsSeed(TypedDict):
+    equipment_type: EquipmentTypeRefSeed
+    items: list[InspectionItemSeed]
+
+
+DEFAULT_EQUIPMENT_TYPES: list[EquipmentTypeSeed] = [
     {
         "name": "Termometro Electronico TP7 / TP9",
         "role": "working",
@@ -355,7 +406,7 @@ DEFAULT_EQUIPMENT_TYPES = [
     },
 ]
 
-DEFAULT_EQUIPMENT_TYPE_INSPECTION_ITEMS = [
+DEFAULT_EQUIPMENT_TYPE_INSPECTION_ITEMS: list[InspectionItemsSeed] = [
     {
         "equipment_type": {
             "name": "Pesa",
@@ -961,8 +1012,3 @@ DEFAULT_EQUIPMENT_TYPE_INSPECTION_ITEMS = [
         ],
     },
 ]
-
-
-
-
-

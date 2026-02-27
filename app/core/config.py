@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
     supabase_storage_bucket: str | None = None
 
-    # # CORS
-    # cors_origins: list[str] = []
+    # CORS — comma-separated string, e.g. "http://localhost:5173,https://app.example.com"
+    cors_origins: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

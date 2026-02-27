@@ -1,9 +1,9 @@
 from sqlmodel import Session, select
 
 from app.core.bootstrap.data.external_analyses import DEFAULT_EXTERNAL_ANALYSIS_TYPES
+from app.models.enums import UserType
 from app.models.external_analysis_type import ExternalAnalysisType
 from app.models.user import User
-from app.models.enums import UserType
 
 
 def ensure_default_external_analysis_types(session: Session) -> None:
@@ -15,7 +15,9 @@ def ensure_default_external_analysis_types(session: Session) -> None:
 
     for data in DEFAULT_EXTERNAL_ANALYSIS_TYPES:
         existing = session.exec(
-            select(ExternalAnalysisType).where(ExternalAnalysisType.name == data["name"])
+            select(ExternalAnalysisType).where(
+                ExternalAnalysisType.name == data["name"]
+            )
         ).first()
         if existing:
             continue

@@ -9,8 +9,7 @@ from app.models.enums import (
     EquipmentStatus,
     UserType,
 )
-from app.models.equipment import Equipment
-from app.models.equipment import EquipmentComponentSerial
+from app.models.equipment import Equipment, EquipmentComponentSerial
 from app.models.equipment_measure_spec import EquipmentMeasureSpec
 from app.models.equipment_type import EquipmentType
 from app.models.equipment_type_history import EquipmentTypeHistory
@@ -68,6 +67,7 @@ def _normalize_api(value: float, unit: str) -> float:
         return float(value)
     raise ValueError(f"Unsupported API unit: {unit}")
 
+
 def _normalize_percent_pv(value: float, unit: str) -> float:
     unit_key = unit.strip().lower().replace(" ", "")
     if unit_key in {"%p/v", "%pv", "p/v", "%w/v"}:
@@ -82,7 +82,6 @@ def _normalize_relative_humidity(value: float, unit: str) -> float:
     raise ValueError(f"Unsupported relative humidity unit: {unit}")
 
 
-
 def ensure_default_equipment(session: Session) -> None:
     company = session.exec(
         select(Company).where(Company.name == DEFAULT_PRIMARY_COMPANY_NAME)
@@ -91,9 +90,7 @@ def ensure_default_equipment(session: Session) -> None:
         raise RuntimeError("Company must exist before equipment")
 
     default_terminal = session.exec(
-        select(CompanyTerminal).where(
-            CompanyTerminal.owner_company_id == company.id
-        )
+        select(CompanyTerminal).where(CompanyTerminal.owner_company_id == company.id)
     ).first()
     if not default_terminal or default_terminal.id is None:
         # Skip seeding if no terminal exists yet.
@@ -125,12 +122,15 @@ def ensure_default_equipment(session: Session) -> None:
         terminal = default_terminal
         terminal_name = data.get("terminal")
         if terminal_name:
-            terminal = session.exec(
-                select(CompanyTerminal).where(
-                    CompanyTerminal.owner_company_id == company.id,
-                    CompanyTerminal.name == terminal_name,
-                )
-            ).first() or default_terminal
+            terminal = (
+                session.exec(
+                    select(CompanyTerminal).where(
+                        CompanyTerminal.owner_company_id == company.id,
+                        CompanyTerminal.name == terminal_name,
+                    )
+                ).first()
+                or default_terminal
+            )
 
         weight_class = data.get("weight_class")
         nominal_mass_value = data.get("nominal_mass_value")

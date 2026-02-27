@@ -21,15 +21,15 @@ def ensure_default_company(session: Session) -> None:
     """
     Seed default companies, users, blocks, and terminals for development.
     """
-    statement = select(User).where(User.user_type == UserType.superadmin)
-    superadmin = session.exec(statement).first()
+    user_stmt = select(User).where(User.user_type == UserType.superadmin)
+    superadmin = session.exec(user_stmt).first()
 
     if not superadmin or superadmin.id is None:
         raise RuntimeError("Superadmin must exist before creating company")
 
     for company_data in DEFAULT_COMPANIES:
-        statement = select(Company).where(Company.name == company_data["name"])
-        existing_company = session.exec(statement).first()
+        company_stmt = select(Company).where(Company.name == company_data["name"])
+        existing_company = session.exec(company_stmt).first()
         if existing_company:
             continue
         new_company = Company(
@@ -50,9 +50,7 @@ def ensure_default_company(session: Session) -> None:
         select(Company).where(Company.name != DEFAULT_PRIMARY_COMPANY_NAME)
     ).first()
     companies_by_name = {
-        c.name: c
-        for c in session.exec(select(Company)).all()
-        if c.id is not None
+        c.name: c for c in session.exec(select(Company)).all() if c.id is not None
     }
 
     if superadmin.company_id != primary_company.id:
@@ -60,8 +58,8 @@ def ensure_default_company(session: Session) -> None:
         session.add(superadmin)
 
     for user_data in DEFAULT_USERS:
-        statement = select(User).where(User.email == user_data["email"])
-        existing_user = session.exec(statement).first()
+        existing_user_stmt = select(User).where(User.email == user_data["email"])
+        existing_user = session.exec(existing_user_stmt).first()
         if existing_user:
             target_company_name = user_data.get("company")
             target_company = (
@@ -86,9 +84,7 @@ def ensure_default_company(session: Session) -> None:
 
         target_company_name = user_data.get("company")
         target_company = (
-            companies_by_name.get(target_company_name)
-            if target_company_name
-            else None
+            companies_by_name.get(target_company_name) if target_company_name else None
         )
         new_user = User(
             name=user_data["name"],
@@ -103,7 +99,11 @@ def ensure_default_company(session: Session) -> None:
                 else (
                     primary_company.id
                     if user_data["user_type"] in {"superadmin", "admin"}
-                    else (secondary_company.id if secondary_company else primary_company.id)
+                    else (
+                        secondary_company.id
+                        if secondary_company
+                        else primary_company.id
+                    )
                 )
             ),
         )
@@ -215,19 +215,19 @@ def ensure_default_company(session: Session) -> None:
         users_by_email = {
             u.email: u
             for u in session.exec(
-                select(User).where(User.email.in_([u["email"] for u in DEFAULT_USERS]))
+                select(User).where(
+                    User.email.in_([u["email"] for u in DEFAULT_USERS])  # type: ignore[attr-defined]
+                )
             ).all()
         }
         existing_links = session.exec(
             select(UserTerminal).where(
-                UserTerminal.user_id.in_(
+                UserTerminal.user_id.in_(  # type: ignore[attr-defined]
                     [u.id for u in users_by_email.values() if u.id]
                 )
             )
         ).all()
-        existing_pairs = {
-            (link.user_id, link.terminal_id) for link in existing_links
-        }
+        existing_pairs = {(link.user_id, link.terminal_id) for link in existing_links}
         for user_data in DEFAULT_USERS:
             terminals_for_user = user_data.get("terminals") or []
             if not terminals_for_user:

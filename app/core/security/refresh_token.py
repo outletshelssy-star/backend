@@ -1,6 +1,6 @@
+import hashlib
+import hmac
 import secrets
-
-from app.core.security.password import hash_password, verify_password
 
 
 def generate_refresh_token() -> str:
@@ -8,8 +8,8 @@ def generate_refresh_token() -> str:
 
 
 def hash_refresh_token(token: str) -> str:
-    return hash_password(token)
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def verify_refresh_token(token: str, token_hash: str) -> bool:
-    return verify_password(token, token_hash)
+    return hmac.compare_digest(hash_refresh_token(token), token_hash)

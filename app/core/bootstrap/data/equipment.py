@@ -1,4 +1,43 @@
-DEFAULT_EQUIPMENT = [
+from typing import NotRequired, TypedDict
+
+
+class EquipmentTypeRefSeed(TypedDict):
+    name: str
+    role: str
+
+
+class MeasureSpecSeed(TypedDict):
+    measure: str
+    min_unit: str
+    max_unit: str
+    resolution_unit: str
+    min_value: float
+    max_value: float
+    resolution: float | None
+
+
+class ComponentSerialSeed(TypedDict):
+    component_name: str
+    serial: str
+
+
+class EquipmentSeed(TypedDict):
+    equipment_type: EquipmentTypeRefSeed
+    serial: str
+    model: str
+    brand: str
+    status: str
+    inspection_days_override: int | None
+    measure_specs: list[MeasureSpecSeed]
+    terminal: NotRequired[str]
+    component_serials: NotRequired[list[ComponentSerialSeed]]
+    weight_class: NotRequired[str]
+    nominal_mass_value: NotRequired[float]
+    nominal_mass_unit: NotRequired[str]
+    emp_value: NotRequired[float]
+
+
+DEFAULT_EQUIPMENT: list[EquipmentSeed] = [
     # {
     #     "equipment_type": {
     #         "name": "Termometro Electronico TL1",
