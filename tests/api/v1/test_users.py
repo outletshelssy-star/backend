@@ -1,3 +1,10 @@
+from sqlmodel import select
+
+from app.models.company import Company
+from app.models.enums import CompanyType, UserType
+from app.models.user import User
+
+
 def _login_headers(client, email: str, password: str) -> dict[str, str]:
     response = client.post(
         "/api/v1/auth/login",
@@ -721,8 +728,3 @@ def test_admin_cannot_delete_superadmin(client, auth_headers, session):
         headers=admin_headers,
     )
     assert delete_response.status_code == 403
-from sqlmodel import select
-
-from app.models.company import Company
-from app.models.enums import CompanyType, UserType
-from app.models.user import User

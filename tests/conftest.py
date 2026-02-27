@@ -1,18 +1,30 @@
 import os
 
-import pytest
-from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, select
-
-import app.models
-from app.core.security.password import hash_password
-from app.db.session import get_session
-from app.main import app
-from app.models.enums import CompanyType, UserType
-from app.models.company import Company
-from app.models.user import User
-
+# Must be set before any app imports so get_settings() caches the correct env
 os.environ["APP_ENV"] = "test"
+
+import pytest  # noqa: E402
+from argon2 import PasswordHasher  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlmodel import Session, SQLModel, create_engine, select  # noqa: E402
+
+import app.core.security.password as _pwd_module  # noqa: E402
+import app.models  # noqa: E402
+from app.core.security.password import hash_password  # noqa: E402
+from app.db.session import get_session  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models.company import Company  # noqa: E402
+from app.models.enums import CompanyType, UserType  # noqa: E402
+from app.models.user import User  # noqa: E402
+
+# Use minimal Argon2 parameters in tests to avoid slow hashing
+_pwd_module._ph = PasswordHasher(
+    time_cost=1,
+    memory_cost=8,
+    parallelism=1,
+    hash_len=16,
+    salt_len=8,
+)
 
 
 @pytest.fixture(scope="session")
@@ -40,6 +52,7 @@ def session(engine):
         session.add(superadmin)
         session.commit()
         session.refresh(superadmin)
+        assert superadmin.id is not None
 
         company = Company(
             name="Frontera Energy",
@@ -88,6 +101,7 @@ def auth_headers(client, session: Session):
 
     session.commit()
     session.refresh(admin)
+    assert admin.id is not None
 
     company = session.exec(
         select(Company).where(Company.name == "Frontera Energy")
