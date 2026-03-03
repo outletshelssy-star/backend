@@ -17,6 +17,7 @@ class SampleBase(SQLModel):
     thermohygrometer_id: int | None = Field(default=None, foreign_key="equipment.id")
     lab_humidity: float | None = None
     lab_temperature: float | None = None
+    last_update_reason: str | None = Field(default=None, max_length=500)
 
 
 class Sample(AuditMixin, SampleBase, table=True):
@@ -122,6 +123,7 @@ class SampleUpdate(SQLModel):
     lab_humidity: float | None = None
     lab_temperature: float | None = None
     identifier: str | None = None
+    update_reason: str | None = None
     analyses: list[SampleAnalysisUpdate] | None = None
 
 
@@ -158,6 +160,7 @@ class SampleRead(SQLModel):
     thermohygrometer_id: int | None = None
     lab_humidity: float | None
     lab_temperature: float | None
+    last_update_reason: str | None
     analyses: list[SampleAnalysisRead] = Field(default_factory=list)
 
 
