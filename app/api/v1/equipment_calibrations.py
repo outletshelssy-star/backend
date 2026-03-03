@@ -511,7 +511,7 @@ def get_equipment_calibration(
     ),
 ) -> EquipmentCalibrationRead:
     """
-    Obtiene una calibracion por ID.
+    Obtiene una calibración por ID.
 
     Permisos: `user`, `admin`, `superadmin`.
     Respuestas:
@@ -552,7 +552,7 @@ def update_equipment_calibration(
     ),
 ) -> EquipmentCalibrationRead:
     """
-    Actualiza una calibracion por ID.
+    Actualiza una calibración por ID.
 
     Permisos: `user`, `admin`, `superadmin`.
     Respuestas:
@@ -623,7 +623,7 @@ def upload_equipment_calibration_certificate(
     ),
 ) -> EquipmentCalibrationRead:
     """
-    Sube el certificado PDF de una calibracion.
+    Sube el certificado PDF de una calibración.
 
     Permisos: `user`, `admin`, `superadmin`.
     Respuestas:

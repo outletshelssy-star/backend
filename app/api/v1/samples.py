@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, delete, func, select
@@ -199,6 +199,7 @@ def create_sample(
         thermohygrometer_id=sample.thermohygrometer_id,
         lab_humidity=sample.lab_humidity,
         lab_temperature=sample.lab_temperature,
+        last_update_reason=sample.last_update_reason,
         analyses=[
             SampleAnalysisRead.model_validate(r, from_attributes=True)
             for r in analysis_rows
@@ -262,6 +263,7 @@ def list_samples(
                 thermohygrometer_id=sample.thermohygrometer_id,
                 lab_humidity=sample.lab_humidity,
                 lab_temperature=sample.lab_temperature,
+                last_update_reason=sample.last_update_reason,
                 analyses=[
                     SampleAnalysisRead.model_validate(r, from_attributes=True)
                     for r in analyses
@@ -311,6 +313,18 @@ def update_sample(
     _check_terminal_access(session, current_user, sample.terminal_id)
 
     update_data = payload.model_dump(exclude_unset=True)
+    update_reason = str(payload.update_reason or "").strip()
+    if datetime.now(UTC) - _as_utc(sample.created_at) >= timedelta(hours=24):
+        if not update_reason:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Debes indicar el motivo de la modificacion para muestras "
+                    "con mas de 24 horas de creadas."
+                ),
+            )
+    if update_reason:
+        sample.last_update_reason = update_reason
     if payload.product_name is not None:
         sample.product_name = payload.product_name
     if payload.analyzed_at is not None:
@@ -492,6 +506,7 @@ def update_sample(
         thermohygrometer_id=sample.thermohygrometer_id,
         lab_humidity=sample.lab_humidity,
         lab_temperature=sample.lab_temperature,
+        last_update_reason=sample.last_update_reason,
         analyses=[
             SampleAnalysisRead.model_validate(r, from_attributes=True) for r in analyses
         ],

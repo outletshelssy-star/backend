@@ -105,6 +105,18 @@ def _normalize_temperature(value: float, unit: str) -> float:
     )
 
 
+def _normalize_temperature_delta(value: float, unit: str) -> float:
+    unit_key = unit.strip().lower()
+    if unit_key in {"c", "celsius", "k", "kelvin"}:
+        return value
+    if unit_key in {"f", "fahrenheit", "r", "rankine"}:
+        return value * 5.0 / 9.0
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Unsupported temperature unit",
+    )
+
+
 def _normalize_weight(value: float, unit: str) -> float:
     unit_key = unit.strip().lower()
     try:
@@ -424,7 +436,7 @@ def create_equipment(
             min_value = _normalize_temperature(spec.min_value, spec.min_unit)
             max_value = _normalize_temperature(spec.max_value, spec.max_unit)
             resolution = (
-                _normalize_temperature(spec.resolution, spec.resolution_unit)
+                _normalize_temperature_delta(spec.resolution, spec.resolution_unit)
                 if spec.resolution is not None
                 else None
             )
@@ -1059,7 +1071,7 @@ def update_equipment(
                 min_value = _normalize_temperature(spec.min_value, spec.min_unit)
                 max_value = _normalize_temperature(spec.max_value, spec.max_unit)
                 resolution = (
-                    _normalize_temperature(spec.resolution, spec.resolution_unit)
+                    _normalize_temperature_delta(spec.resolution, spec.resolution_unit)
                     if spec.resolution is not None
                     else None
                 )

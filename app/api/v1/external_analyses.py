@@ -74,7 +74,11 @@ def _check_terminal_access(session: Session, user: User, terminal_id: int) -> No
 def list_external_analysis_types(
     session: Session = Depends(get_session),
 ) -> ExternalAnalysisTypeListResponse:
-    """Lista los tipos de análisis externo."""
+    """
+    Lista los tipos de análisis externo.
+
+    Permisos: público (sin autenticación previa).
+    """
     rows = session.exec(select(ExternalAnalysisType)).all()
     if not rows:
         return ExternalAnalysisTypeListResponse(message="No records found")
@@ -96,7 +100,14 @@ def create_external_analysis_type(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> ExternalAnalysisTypeRead:
-    """Crea un tipo de análisis externo."""
+    """
+    Crea un tipo de análisis externo.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 409: ya existe un tipo con el mismo nombre.
+    """
     if current_user.id is None:
         raise HTTPException(status_code=500, detail="User has no ID")
     existing = session.exec(
@@ -133,7 +144,14 @@ def update_external_analysis_type(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> ExternalAnalysisTypeRead:
-    """Actualiza un tipo de análisis externo por ID."""
+    """
+    Actualiza un tipo de análisis externo por ID.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    """
     row = session.get(ExternalAnalysisType, analysis_type_id)
     if not row:
         raise HTTPException(status_code=404, detail="External analysis type not found")
@@ -159,7 +177,15 @@ def delete_external_analysis_type(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> dict:
-    """Elimina un tipo de análisis externo si no está en uso."""
+    """
+    Elimina un tipo de análisis externo si no está en uso.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: recurso no encontrado.
+    - 409: el tipo está en uso y no puede eliminarse.
+    """
     row = session.get(ExternalAnalysisType, analysis_type_id)
     if not row:
         raise HTTPException(status_code=404, detail="External analysis type not found")
@@ -195,7 +221,14 @@ def list_terminal_external_analyses(
         )
     ),
 ) -> ExternalAnalysisTerminalListResponse:
-    """Lista configuraciones de análisis externos por terminal."""
+    """
+    Lista configuraciones de análisis externos por terminal.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes o sin acceso a la terminal.
+    - 404: terminal no encontrada.
+    """
     terminal = session.get(CompanyTerminal, terminal_id)
     if not terminal:
         raise HTTPException(status_code=404, detail="Terminal not found")
@@ -270,7 +303,14 @@ def upsert_terminal_external_analysis(
     session: Session = Depends(get_session),
     current_user: User = Depends(require_role(UserType.admin, UserType.superadmin)),
 ) -> ExternalAnalysisTerminalRead:
-    """Crea o actualiza la configuración de análisis externo por terminal."""
+    """
+    Crea o actualiza la configuración de análisis externo por terminal.
+
+    Permisos: `admin` o `superadmin`.
+    Respuestas:
+    - 403: permisos insuficientes.
+    - 404: terminal o tipo de análisis no encontrado.
+    """
     if current_user.id is None:
         raise HTTPException(status_code=500, detail="User has no ID")
     terminal = session.get(CompanyTerminal, terminal_id)

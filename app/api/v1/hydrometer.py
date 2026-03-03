@@ -36,7 +36,14 @@ def calculate_api_60f(
         )
     ),
 ) -> Api60fResponse:
-    """Calcula el API corregido a 60F a partir de temperatura observada."""
+    """
+    Calcula el API corregido a 60°F a partir de temperatura observada y lectura de hidrómetro.
+
+    Permisos: `visitor`, `user`, `admin`, `superadmin`.
+    Respuestas:
+    - 400: valor de temperatura o API fuera de rango.
+    - 403: permisos insuficientes.
+    """
     try:
         api_60f = api_60f_crude(payload.temp_obs_f, payload.lectura_api)
     except ValueError as exc:
